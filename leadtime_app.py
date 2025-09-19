@@ -17,6 +17,7 @@ from openpyxl.chart.series import DataPoint
 from openpyxl.styles import PatternFill
 from openpyxl.chart.label import DataLabelList
 import numpy as np
+import unicodedata
 
 # --- FERIADOS 2025 ---
 feriados_2025 = [
@@ -53,27 +54,113 @@ def calcular_dias_habiles(fecha_inicio, fecha_fin):
 
 # --- LISTA DE LOCALIDADES AMBA ---
 amba_localidades = [
-    "CIUDAD AUTONOMA BUENOS AIRES", "AVELLANEDA", "LANUS", "LOMAS DE ZAMORA", "LA MATANZA",
-    "MORON", "SAN MARTIN", "VICENTE LOPEZ", "SAN ISIDRO", "TRES DE FEBRERO",
-    "MORENO", "HURLINGHAM", "ITUZAINGO", "BERAZATEGUI", "FLORENCIO VARELA",
-    "QUILMES", "ALMIRANTE BROWN", "ESTEBAN ECHEVERRIA", "EZEIZA", "SAN FERNANDO",
-    "TIGRE", "SAN MIGUEL", "MALVINAS ARGENTINAS", "JOSE C. PAZ", "PILAR",
-    "ESCOBAR", "MERLO", "MARCOS PAZ", "GENERAL RODRIGUEZ", "PRESIDENTE PERON",
-    "CAÑUELAS", "SAN VICENTE", "BRANDSEN", "BERISSO", "ENSENADA", "LA PLATA",
-    "MUNRO", "SAAVEDRA", "FLORES", "ALMAGRO", "VILLA URQUIZA", "COLEGIALES",
-    "PALERMO", "RECOLETA", "BELGRANO", "NUÑEZ", "CABALLITO", "BOEDO", "SAN TELMO",
-    "CONSTITUCION", "RETIRO", "SAN CRISTOBAL", "BALVANERA", "MONTSERRAT"
+    "CIUDAD AUTONOMA BUENOS AIRES",
+    "AVELLANEDA",
+    "LANUS",
+    "LOMAS DE ZAMORA",
+    "LA MATANZA",
+    "MORON",
+    "SAN MARTIN",
+    "VICENTE LOPEZ",
+    "SAN ISIDRO",
+    "TRES DE FEBRERO",
+    "MORENO",
+    "HURLINGHAM",
+    "ITUZAINGO",
+    "BERAZATEGUI",
+    "FLORENCIO VARELA",
+    "QUILMES",
+    "ALMIRANTE BROWN",
+    "ESTEBAN ECHEVERRIA",
+    "EZEIZA",
+    "SAN FERNANDO",
+    "TIGRE",
+    "SAN MIGUEL",
+    "MALVINAS ARGENTINAS",
+    "JOSE C. PAZ",
+    "PILAR",
+    "ESCOBAR",
+    "MERLO",
+    "MARCOS PAZ",
+    "GENERAL RODRIGUEZ",
+    "PRESIDENTE PERON",
+    "CAÑUELAS",
+    "SAN VICENTE",
+    "BRANDSEN",
+    "BERISSO",
+    "ENSENADA",
+    "LA PLATA",
+    "MUNRO",
+    "SAAVEDRA",
+    "FLORES",
+    "ALMAGRO",
+    "VILLA URQUIZA",
+    "COLEGIALES",
+    "PALERMO",
+    "RECOLETA",
+    "BELGRANO",
+    "NUÑEZ",
+    "CABALLITO",
+    "BOEDO",
+    "SAN TELMO",
+    "CONSTITUCION",
+    "RETIRO",
+    "SAN CRISTOBAL",
+    "BALVANERA",
+    "MONTSERRAT"
+]
+
+# --- EXCEPCIONES: localidades que NO son AMBA aunque tengan nombre similar ---
+excepciones_amba = [
+    "SAN MARTIN, SANTA FE",
+    "SAN MARTIN, MENDOZA",
+    "SAN MARTIN, SAN JUAN",
+    "SAN MARTIN, CORRIENTES",
+    "SAN MARTIN, ENTRE RIOS",
+    "VILLA LIB. GENERAL SAN MARTIN",
+    "GENERAL SAN MARTIN",
+    "SAN MARTIN DE LOS ANDES",
+    "SAN MARTIN DE LA VEGA",
+    "TANDIL, BUENOS AIRES",
+    "MAR DEL PLATA, BUENOS AIRES",
+    "BAHIA BLANCA, BUENOS AIRES",
+    "NECOCHEA, BUENOS AIRES",
+    "OLAVARRIA, BUENOS AIRES",
+    "AZUL, BUENOS AIRES"
 ]
 
 def determinar_zona(localidad_destino):
     if pd.isna(localidad_destino):
         return "INTERIOR"
     
-    localidad_destino = str(localidad_destino).upper()
+    # Normalizar: mayúsculas, sin espacios extra, sin tildes
+    localidad_destino = str(localidad_destino).upper().strip()
+    localidad_destino = ''.join(
+        c for c in unicodedata.normalize('NFD', localidad_destino)
+        if unicodedata.category(c) != 'Mn'
+    )
     
-    # Verificar si es AMBA
+    # 1. Verificar excepciones primero
+    for excepcion in excepciones_amba:
+        if excepcion in localidad_destino:
+            return "INTERIOR"
+    
+    # 2. Coincidencia exacta
     for localidad_amba in amba_localidades:
-        if localidad_amba in localidad_destino:
+        if localidad_amba == localidad_destino:
+            return "AMBA"
+    
+    # 3. Coincidencia parcial segura: empieza con nombre de AMBA + coma o espacio
+    for localidad_amba in amba_localidades:
+        if localidad_destino.startswith(localidad_amba):
+            resto = localidad_destino[len(localidad_amba):].strip()
+            if resto.startswith(",") or resto.startswith(" ") or len(resto) == 0:
+                return "AMBA"
+    
+    # 4. Palabras clave seguras
+    palabras_clave_amba = ["CAPITAL FEDERAL", "C.A.B.A.", "CABA", "CIUDAD AUTONOMA"]
+    for palabra in palabras_clave_amba:
+        if palabra in localidad_destino:
             return "AMBA"
     
     return "INTERIOR"
@@ -744,6 +831,13 @@ if uploaded_file is not None:
         file_name="Vista_Previa_Datos.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
+
+    # --- PRUEBA RÁPIDA EN SIDEBAR ---
+    st.sidebar.markdown("### 🧪 Prueba de Clasificación")
+    prueba_localidad = st.sidebar.text_input("Ingresa localidad para probar:", "VICENTE LOPEZ, BUENOS AIRES")
+    if prueba_localidad:
+        zona = determinar_zona(prueba_localidad)
+        st.sidebar.success(f"Clasificación: **{zona}**")
 
 else:
     st.info("👆 Por favor, sube un archivo Excel para comenzar.")
