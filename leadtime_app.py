@@ -192,32 +192,63 @@ if uploaded_file is not None:
     # Determinar ZONA (AMBA o INTERIOR)
     df['ZONA'] = df['Loc'].apply(determinar_zona)
     
-    # Calcular Lead Time
-    df['Lead Time'] = df.apply(
-        lambda row: calcular_dias_habiles(row['Fecha'], row['Fecha último estado']),
+    # Determinar días prometidos según ZONA, pero con excepción para Delivery Hero Riders
+    def determinar_dias_prometidos(row):
+        # Caso especial: DELIVERY HERO E-COMMERCE S.A. + RIDERS
+        if row.get('Cliente', '') == "DELIVERY HERO E-COMMERCE S.A." and row.get('Subcuenta', '') == "RIDERS":
+            return 3  # Siempre 3 días, sin importar zona
+        else:
+            # Comportamiento normal
+            return 3 if row['ZONA'] == "AMBA" else 5
+
+    df['Días Prometidos'] = df.apply(determinar_dias_prometidos, axis=1)
+    
+    # Calcular Lead Time, con excepción para Delivery Hero Riders (restar 1 día de gracia)
+    def calcular_lead_time(row):
+        lead_time = calcular_dias_habiles(row['Fecha'], row['Fecha último estado'])
+        
+        # Si es Delivery Hero Riders, restar 1 día de gracia (preparación warehouse)
+        if row.get('Cliente', '') == "DELIVERY HERO E-COMMERCE S.A." and row.get('Subcuenta', '') == "RIDERS":
+            if pd.notna(lead_time) and lead_time > 0:
+                lead_time = max(0, lead_time - 1)  # No permitir valores negativos
+        
+        return lead_time
+
+    df['Lead Time'] = df.apply(calcular_lead_time, axis=1)
+    
+    # Columna para identificar si se aplicó día de gracia
+    df['Día de Gracia Aplicado'] = df.apply(
+        lambda row: "Sí" if row.get('Cliente', '') == "DELIVERY HERO E-COMMERCE S.A." and row.get('Subcuenta', '') == "RIDERS" else "No",
         axis=1
     )
     
-    # Determinar días prometidos según ZONA
-    df['Días Prometidos'] = df['ZONA'].apply(lambda z: 3 if z == "AMBA" else 5)
-    
-    # Determinar cumplimiento (incluyendo condición ED)
+    # Determinar cumplimiento (incluyendo condición ED y Condición de venta)
     def determinar_cumplimiento(row):
         estado = str(row['Estado']).lower()
-        ed = str(row.get('ED', '')).upper() if 'ED' in df.columns else 'SI'  # Por defecto SI si no existe la columna
+        ed = str(row.get('ED', '')).upper() if 'ED' in df.columns else 'SI'
+        condicion_venta = str(row.get('Condición de venta', '')).upper() if 'Condición de venta' in df.columns else ''
         
-        # Si ED es "NO", considerar "Esperando retiro" como entregado
+        # Si ED es "NO" y estado es "esperando retiro"
         if ed == "NO" and "esperando retiro" in estado:
             if pd.notna(row['Lead Time']) and row['Lead Time'] <= row['Días Prometidos']:
-                return "Entregada - En Tiempo"
+                # Si condición de venta es PD, marcar como entregada pero con nota
+                if condicion_venta == "PD":
+                    return "Entregada - En Tiempo (PD: Pago Pendiente)"
+                else:
+                    return "Entregada - En Tiempo"
             else:
-                return "Entregada - Fuera de Tiempo"
+                if condicion_venta == "PD":
+                    return "Entregada - Fuera de Tiempo (PD: Pago Pendiente)"
+                else:
+                    return "Entregada - Fuera de Tiempo"
+        
         # Para ED "SI" o cualquier otro caso, considerar "Entregada" como entregado
         elif "entregada" in estado:
             if pd.notna(row['Lead Time']) and row['Lead Time'] <= row['Días Prometidos']:
                 return "Entregada - En Tiempo"
             else:
                 return "Entregada - Fuera de Tiempo"
+        
         else:
             # Para pendientes: comparar días transcurridos vs prometidos
             if pd.notna(row['Lead Time']):
@@ -282,9 +313,24 @@ if uploaded_file is not None:
     
     df['Alerta Pendiente Fuera Tiempo'] = df.apply(alerta_pendiente_fuera_tiempo, axis=1)
     
+    # --- ALERTA DE PAGO PENDIENTE ---
+    # Para pedidos con Condición de venta = "PD" y estado "Esperando retiro" con más de 5 días hábiles desde la fecha último estado
+    def alerta_pago_pendiente(row):
+        estado = str(row['Estado']).lower()
+        condicion_venta = str(row.get('Condición de venta', '')).upper() if 'Condición de venta' in df.columns else ''
+        fecha_ultimo_estado = row['Fecha último estado']
+        
+        if condicion_venta == "PD" and "esperando retiro" in estado and pd.notna(fecha_ultimo_estado):
+            dias_desde_ultimo_estado = calcular_dias_habiles(fecha_ultimo_estado, datetime.now())
+            if dias_desde_ultimo_estado is not None and dias_desde_ultimo_estado >= 5:
+                return "Pago pendiente demorado"
+        return ""
+    
+    df['Alerta Pago Pendiente'] = df.apply(alerta_pago_pendiente, axis=1)
+    
     # --- FILTROS ---
     st.sidebar.header("🔍 Filtros")
-    
+
     # Filtro por Cliente (con verificación)
     if 'Cliente' in df.columns:
         clientes = sorted(df['Cliente'].dropna().unique())
@@ -292,7 +338,7 @@ if uploaded_file is not None:
     else:
         st.error("❌ La columna 'Cliente' no existe en el archivo. Verifica el nombre de las columnas.")
         st.stop()
-    
+
     # Filtro por Subcuenta (con verificación)
     if 'Subcuenta' in df.columns:
         subcuentas = sorted(df['Subcuenta'].dropna().unique())
@@ -300,7 +346,15 @@ if uploaded_file is not None:
     else:
         st.error("❌ La columna 'Subcuenta' no existe en el archivo. Verifica el nombre de las columnas.")
         st.stop()
-    
+
+    # Filtro por Agencia origen (con verificación)
+    if 'Agencia origen' in df.columns:
+        agencias_origen = sorted(df['Agencia origen'].dropna().unique())
+        agencia_origen_seleccionada = st.sidebar.selectbox("Agencia origen", ["Todas"] + agencias_origen)
+    else:
+        st.warning("⚠️ La columna 'Agencia origen' no existe en el archivo. Se omitirá este filtro.")
+        agencia_origen_seleccionada = "Todas"
+
     # Filtro por Agencia destino (con verificación)
     if 'Agencia destino' in df.columns:
         agencias = sorted(df['Agencia destino'].dropna().unique())
@@ -308,7 +362,7 @@ if uploaded_file is not None:
     else:
         st.error("❌ La columna 'Agencia destino' no existe en el archivo. Verifica el nombre de las columnas.")
         st.stop()
-    
+
     # Filtro por ED (con verificación)
     if 'ED' in df.columns:
         ed_opciones = sorted(df['ED'].dropna().unique())
@@ -316,34 +370,50 @@ if uploaded_file is not None:
     else:
         st.warning("⚠️ La columna 'ED' no existe en el archivo. Se omitirá este filtro.")
         ed_seleccionada = "Todas"
-    
+
+    # Filtro por Condición de venta (con verificación)
+    if 'Condición de venta' in df.columns:
+        condiciones_venta = sorted(df['Condición de venta'].dropna().unique())
+        condicion_venta_seleccionada = st.sidebar.selectbox("Condición de venta", ["Todas"] + condiciones_venta)
+    else:
+        st.warning("⚠️ La columna 'Condición de venta' no existe en el archivo. Se omitirá este filtro.")
+        condicion_venta_seleccionada = "Todas"
+
     # Aplicar filtros
     if cliente_seleccionado != "Todos":
         df = df[df['Cliente'] == cliente_seleccionado]
-    
+
     if subcuenta_seleccionada != "Todas":
         df = df[df['Subcuenta'] == subcuenta_seleccionada]
-    
+
+    if 'Agencia origen' in df.columns and agencia_origen_seleccionada != "Todas":
+        df = df[df['Agencia origen'] == agencia_origen_seleccionada]
+
     if agencia_seleccionada != "Todas":
         df = df[df['Agencia destino'] == agencia_seleccionada]
-    
+
     if 'ED' in df.columns and 'ed_seleccionada' in locals() and ed_seleccionada != "Todas":
         df = df[df['ED'] == ed_seleccionada]
+
+    if 'Condición de venta' in df.columns and condicion_venta_seleccionada != "Todas":
+        df = df[df['Condición de venta'] == condicion_venta_seleccionada]
     
     # --- ESTADÍSTICAS ---
     st.header("📈 Estadísticas")
     
     total_pedidos = df.shape[0]
-    entregados = df[df['Cumplimiento'].str.startswith("Entregada")].shape[0]
-    pendientes = total_pedidos - entregados
-    
-    # Clasificación detallada - ORDEN CORREGIDO
     en_tiempo = df[df['Cumplimiento'] == "Entregada - En Tiempo"].shape[0]
+    en_tiempo_pd = df[df['Cumplimiento'] == "Entregada - En Tiempo (PD: Pago Pendiente)"].shape[0]
     fuera_tiempo = df[df['Cumplimiento'] == "Entregada - Fuera de Tiempo"].shape[0]
+    fuera_tiempo_pd = df[df['Cumplimiento'] == "Entregada - Fuera de Tiempo (PD: Pago Pendiente)"].shape[0]
     pendiente_en_tiempo = df[df['Cumplimiento'] == "Pendiente - En Tiempo"].shape[0]
     pendiente_fuera_tiempo = df[df['Cumplimiento'] == "Pendiente - Fuera de Tiempo"].shape[0]
     pendiente_ultimo_dia = df[df['Cumplimiento'] == "Pendiente - Último Día"].shape[0]
-    pendiente_sin_datos = df[df['Cumplimiento'] == "Pendiente - Sin datos"].shape[0]
+    # ✅ Eliminado: pendiente_sin_datos = df[df['Cumplimiento'] == "Pendiente - Sin datos"].shape[0]
+    
+    # Total entregados (incluyendo PD)
+    entregados = en_tiempo + en_tiempo_pd + fuera_tiempo + fuera_tiempo_pd
+    pendientes = total_pedidos - entregados
     
     col1, col2, col3, col4 = st.columns(4)
     with col1:
@@ -354,32 +424,37 @@ if uploaded_file is not None:
         st.metric("⏳ Pendientes", pendientes)
     with col4:
         if entregados > 0:
-            porcentaje = (en_tiempo / entregados) * 100
+            # Considerar solo "Entregada - En Tiempo" y "Entregada - En Tiempo (PD)" como cumplidos
+            cumplidos = en_tiempo + en_tiempo_pd
+            porcentaje = (cumplidos / entregados) * 100
             st.metric("🎯 % Cumplimiento Entregados", f"{porcentaje:.1f}%")
         else:
             st.metric("🎯 % Cumplimiento", "0%")
     
-    # Gráfico de torta - Cumplimiento general CON ORDEN CORRECTO
+    # Gráfico de torta - Cumplimiento general SIN "Pendiente - Sin datos"
     cumplimiento_labels = [
         "Entregada - En Tiempo", 
+        "Entregada - En Tiempo (PD)",
         "Entregada - Fuera de Tiempo", 
+        "Entregada - Fuera de Tiempo (PD)",
         "Pendiente - En Tiempo", 
         "Pendiente - Último Día",
-        "Pendiente - Fuera de Tiempo", 
-        "Pendiente - Sin datos"
+        "Pendiente - Fuera de Tiempo"
     ]
     
     cumplimiento_values = [
-        en_tiempo, 
-        fuera_tiempo, 
+        en_tiempo,
+        en_tiempo_pd,
+        fuera_tiempo,
+        fuera_tiempo_pd,
         pendiente_en_tiempo, 
         pendiente_ultimo_dia,
-        pendiente_fuera_tiempo, 
-        pendiente_sin_datos
+        pendiente_fuera_tiempo
+        # ✅ Eliminado: pendiente_sin_datos
     ]
     
     # Colores en orden correcto
-    colores = ["#28a745", "#dc3545", "#ffc107", "#fd7e14", "#6c757d", "#17a2b8"]
+    colores = ["#28a745", "#2ecc71", "#dc3545", "#e74c3c", "#ffc107", "#fd7e14", "#6c757d"]
     
     fig1 = px.pie(
         names=cumplimiento_labels,
@@ -388,11 +463,13 @@ if uploaded_file is not None:
         color=cumplimiento_labels,
         color_discrete_map={
             "Entregada - En Tiempo": "#28a745",
+            "Entregada - En Tiempo (PD)": "#2ecc71",
             "Entregada - Fuera de Tiempo": "#dc3545",
+            "Entregada - Fuera de Tiempo (PD)": "#e74c3c",
             "Pendiente - En Tiempo": "#ffc107",
             "Pendiente - Último Día": "#fd7e14",
-            "Pendiente - Fuera de Tiempo": "#6c757d",
-            "Pendiente - Sin datos": "#17a2b8"
+            "Pendiente - Fuera de Tiempo": "#6c757d"
+            # ✅ Eliminado: "Pendiente - Sin datos": "#17a2b8"
         },
         hole=0.4
     )
@@ -422,7 +499,7 @@ if uploaded_file is not None:
     if 'Producto' in df.columns:
         servicio_stats = df.groupby('Producto')['Cumplimiento'].value_counts().unstack(fill_value=0)
         
-        # Asegurar que todas las categorías estén presentes
+        # Asegurar que todas las categorías estén presentes (SIN "Pendiente - Sin datos")
         for label in cumplimiento_labels:
             if label not in servicio_stats.columns:
                 servicio_stats[label] = 0
@@ -528,18 +605,38 @@ if uploaded_file is not None:
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
 
+    # --- ALERTAS DE PAGO PENDIENTE ---
+    alertas_pago_pendiente = df[df['Alerta Pago Pendiente'] == "Pago pendiente demorado"]
+    if not alertas_pago_pendiente.empty:
+        st.header("🚨 Alertas de Pago Pendiente Demorado")
+        st.write("Los siguientes pedidos están en estado 'Esperando retiro' con condición de venta PD por más de 5 días hábiles. Se sugiere gestionar el cobro.")
+        
+        columnas_alerta = ['Guia', 'Cliente', 'Destinatario', 'Loc', 'Fecha último estado', 'Condición de venta', 'Alerta Pago Pendiente']
+        df_alerta = alertas_pago_pendiente[columnas_alerta]
+        
+        st.dataframe(df_alerta)
+        
+        excel_data = generar_excel_desde_df(df_alerta, "Alertas Pago Pendiente")
+        st.download_button(
+            label="📥 Descargar Alertas Pago Pendiente (Excel)",
+            data=excel_data,
+            file_name="Alertas_Pago_Pendiente.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+
     # --- DESCARGA COMBINADA DE TODAS LAS ALERTAS ---
     st.header("📥 Descarga Combinada de Todas las Alertas")
 
     todas_alertas = df[
         (df['Alerta Devolución'] == "Sugerir devolución") |
         (df['Alerta Redespacho'] == "Redespacho demorado") |
-        (df['Alerta Pendiente Fuera Tiempo'] == "Fuera de tiempo crítico")
+        (df['Alerta Pendiente Fuera Tiempo'] == "Fuera de tiempo crítico") |
+        (df['Alerta Pago Pendiente'] == "Pago pendiente demorado")
     ]
 
     if not todas_alertas.empty:
         columnas_todas = ['Guia', 'Cliente', 'Destinatario', 'Loc', 'Estado', 'Fecha último estado', 
-                          'Alerta Devolución', 'Alerta Redespacho', 'Alerta Pendiente Fuera Tiempo']
+                          'Alerta Devolución', 'Alerta Redespacho', 'Alerta Pendiente Fuera Tiempo', 'Alerta Pago Pendiente']
         df_todas = todas_alertas[columnas_todas]
         
         st.dataframe(df_todas)
@@ -560,21 +657,24 @@ if uploaded_file is not None:
     # Preparar Excel con gráficos
     output_excel = io.BytesIO()
 
-    # Crear datos para el gráfico de estadísticas
+    # Crear datos para el gráfico de estadísticas SIN "Pendiente - Sin datos"
     stats_data = {
         "Métrica": [
             "Total Pedidos", "Entregados", "Pendientes",
-            "Entregada - En Tiempo", "Entregada - Fuera de Tiempo",
+            "Entregada - En Tiempo", "Entregada - En Tiempo (PD)",
+            "Entregada - Fuera de Tiempo", "Entregada - Fuera de Tiempo (PD)",
             "Pendiente - En Tiempo", "Pendiente - Último Día",
-            "Pendiente - Fuera de Tiempo", "Pendiente - Sin datos",
+            "Pendiente - Fuera de Tiempo",
             "% Cumplimiento (solo entregados)"
         ],
         "Valor": [
             total_pedidos, entregados, pendientes,
-            en_tiempo, fuera_tiempo,
+            en_tiempo, en_tiempo_pd,
+            fuera_tiempo, fuera_tiempo_pd,
             pendiente_en_tiempo, pendiente_ultimo_dia,
-            pendiente_fuera_tiempo, pendiente_sin_datos,
-            f"{(en_tiempo/entregados*100):.2f}%" if entregados > 0 else "0%"
+            pendiente_fuera_tiempo,
+            # ✅ Eliminado: pendiente_sin_datos,
+            f"{((en_tiempo + en_tiempo_pd)/entregados*100):.2f}%" if entregados > 0 else "0%"
         ]
     }
     stats_df = pd.DataFrame(stats_data)
@@ -594,11 +694,13 @@ if uploaded_file is not None:
         pie_data = [
             ["Categoría", "Cantidad"],
             ["Entregada - En Tiempo", en_tiempo],
+            ["Entregada - En Tiempo (PD)", en_tiempo_pd],
             ["Entregada - Fuera de Tiempo", fuera_tiempo],
+            ["Entregada - Fuera de Tiempo (PD)", fuera_tiempo_pd],
             ["Pendiente - En Tiempo", pendiente_en_tiempo],
             ["Pendiente - Último Día", pendiente_ultimo_dia],
-            ["Pendiente - Fuera de Tiempo", pendiente_fuera_tiempo],
-            ["Pendiente - Sin datos", pendiente_sin_datos]
+            ["Pendiente - Fuera de Tiempo", pendiente_fuera_tiempo]
+            # ✅ Eliminado: ["Pendiente - Sin datos", pendiente_sin_datos]
         ]
         
         # Escribir datos para el gráfico de torta
@@ -611,8 +713,8 @@ if uploaded_file is not None:
         pie_chart.title = "Distribución de Cumplimiento"
         
         # Referencias a los datos
-        labels = Reference(worksheet, min_col=6, min_row=16, max_row=22)
-        data = Reference(worksheet, min_col=7, min_row=15, max_row=22)
+        labels = Reference(worksheet, min_col=6, min_row=16, max_row=23)  # ✅ Ajustado a 23 (7 categorías)
+        data = Reference(worksheet, min_col=7, min_row=15, max_row=22)    # ✅ Ajustado a 22
         
         # Añadir datos al gráfico
         pie_chart.add_data(data, titles_from_data=True)
@@ -628,7 +730,7 @@ if uploaded_file is not None:
         pie_chart.dataLabels.showCatName = True
         
         # Colores personalizados
-        colors = ['28a745', 'dc3545', 'ffc107', 'fd7e14', '6c757d', '17a2b8']
+        colors = ['28a745', '2ecc71', 'dc3545', 'e74c3c', 'ffc107', 'fd7e14', '6c757d']
         for i, point in enumerate(pie_chart.series[0].data_points):
             point.graphicalProperties.solidFill = colors[i]
         
@@ -677,34 +779,39 @@ if uploaded_file is not None:
         metrics = [
             f"• Total de pedidos: {total_pedidos}",
             f"• Entregados: {entregados} ({(entregados/total_pedidos*100):.1f}%)",
-            f"• Pendientes: {pendientes} ({(pendientes/total_pedidos*100):.1f}%)",
             f"• Entregada - En Tiempo: {en_tiempo}",
+            f"• Entregada - En Tiempo (PD): {en_tiempo_pd}",
             f"• Entregada - Fuera de Tiempo: {fuera_tiempo}",
+            f"• Entregada - Fuera de Tiempo (PD): {fuera_tiempo_pd}",
             f"• Pendiente - En Tiempo: {pendiente_en_tiempo}",
             f"• Pendiente - Último Día: {pendiente_ultimo_dia}",
-            f"• Pendiente - Fuera de Tiempo: {pendiente_fuera_tiempo}",
-            f"• Pendiente - Sin datos: {pendiente_sin_datos}"
+            f"• Pendiente - Fuera de Tiempo: {pendiente_fuera_tiempo}"
+            # ✅ Eliminado: f"• Pendiente - Sin datos: {pendiente_sin_datos}"
         ]
         
         if entregados > 0:
-            metrics.append(f"• % Cumplimiento (solo entregados): {(en_tiempo/entregados*100):.2f}%")
+            cumplidos = en_tiempo + en_tiempo_pd
+            metrics.append(f"• % Cumplimiento (solo entregados): {(cumplidos/entregados*100):.2f}%")
         
         for metric in metrics:
             p = tf.add_paragraph()
             p.text = metric
             p.font.size = Pt(16)
-            if "Entregada - En Tiempo" in metric:
+            if "Entregada - En Tiempo" in metric and "(PD)" not in metric:
                 p.font.color.rgb = RGBColor(40, 167, 69)
-            elif "Entregada - Fuera de Tiempo" in metric:
+            elif "Entregada - En Tiempo (PD)" in metric:
+                p.font.color.rgb = RGBColor(46, 204, 113)  # Verde más claro
+            elif "Entregada - Fuera de Tiempo" in metric and "(PD)" not in metric:
                 p.font.color.rgb = RGBColor(220, 53, 69)
+            elif "Entregada - Fuera de Tiempo (PD)" in metric:
+                p.font.color.rgb = RGBColor(231, 76, 60)  # Rojo más claro
             elif "Pendiente - En Tiempo" in metric:
                 p.font.color.rgb = RGBColor(255, 193, 7)
             elif "Pendiente - Último Día" in metric:
                 p.font.color.rgb = RGBColor(253, 126, 20)
             elif "Pendiente - Fuera de Tiempo" in metric:
                 p.font.color.rgb = RGBColor(108, 117, 125)
-            elif "Pendiente - Sin datos" in metric:
-                p.font.color.rgb = RGBColor(23, 162, 184)
+            # ✅ Eliminado: elif "Pendiente - Sin datos" in metric: ...
         
         # Slide 3: Gráfico de Cumplimiento
         slide_layout = prs.slide_layouts[5]
@@ -713,7 +820,7 @@ if uploaded_file is not None:
         title.text = "Distribución de Cumplimiento"
         
         img_buffer = io.BytesIO()
-        fig1.write_image(img_buffer, format="png", width=800, height=500, engine="kaleido")
+        fig1.write_image(img_buffer, format="png", width=800, height=500, engine="auto")
         img_buffer.seek(0)
         left = Inches(0.5)
         top = Inches(1.5)
@@ -727,7 +834,7 @@ if uploaded_file is not None:
             title.text = "Top 10 Localidades con Más Fuera de Tiempo"
             
             img_buffer2 = io.BytesIO()
-            fig2.write_image(img_buffer2, format="png", width=800, height=500, engine="kaleido")
+            fig2.write_image(img_buffer2, format="png", width=800, height=500, engine="auto")
             img_buffer2.seek(0)
             left = Inches(0.5)
             top = Inches(1.5)
@@ -766,7 +873,7 @@ if uploaded_file is not None:
             )
             
             img_buffer3 = io.BytesIO()
-            fig3_pptx.write_image(img_buffer3, format="png", width=800, height=600, engine="kaleido")
+            fig3_pptx.write_image(img_buffer3, format="png", width=800, height=600, engine="auto")
             img_buffer3.seek(0)
             left = Inches(0.5)
             top = Inches(1.5)
@@ -817,8 +924,13 @@ if uploaded_file is not None:
     # --- VISTA PREVIA DE DATOS ---
     st.header("🔍 Vista Previa de Datos (primeras 10 filas)")
 
-    columnas_mostrar = ['Cliente', 'Subcuenta', 'Agencia destino', 'Fecha', 'Fecha último estado', 'Estado', 'ED', 'ZONA', 'Loc', 'Producto',
-                        'Lead Time', 'Días Prometidos', 'Cumplimiento', 'Días Restantes', 'Alerta Devolución', 'Alerta Redespacho', 'Alerta Pendiente Fuera Tiempo']
+    columnas_mostrar = [
+        'Cliente', 'Subcuenta', 'Agencia origen', 'Agencia destino', 'Condición de venta',
+        'Fecha', 'Fecha último estado', 'Estado', 'ED', 'ZONA', 'Loc', 'Producto',
+        'Lead Time', 'Días Prometidos', 'Día de Gracia Aplicado',
+        'Cumplimiento', 'Días Restantes',
+        'Alerta Devolución', 'Alerta Redespacho', 'Alerta Pendiente Fuera Tiempo', 'Alerta Pago Pendiente'
+    ]
 
     df_vista_previa = df[columnas_mostrar].head(10)
     st.dataframe(df_vista_previa)
