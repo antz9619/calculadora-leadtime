@@ -427,7 +427,6 @@ if uploaded_file is not None:
     pendiente_en_tiempo = df[df['Cumplimiento'] == "Pendiente - En Tiempo"].shape[0]
     pendiente_fuera_tiempo = df[df['Cumplimiento'] == "Pendiente - Fuera de Tiempo"].shape[0]
     pendiente_ultimo_dia = df[df['Cumplimiento'] == "Pendiente - Último Día"].shape[0]
-    pendiente_sin_datos = df[df['Cumplimiento'] == "Pendiente - Sin datos"].shape[0]
     
     col1, col2, col3, col4 = st.columns(4)
     with col1:
@@ -451,8 +450,7 @@ if uploaded_file is not None:
         "Entregada - Fuera de Tiempo (PD)",
         "Pendiente - En Tiempo", 
         "Pendiente - Último Día",
-        "Pendiente - Fuera de Tiempo",
-        "Pendiente - Sin datos"
+        "Pendiente - Fuera de Tiempo"
     ]
     
     cumplimiento_values = [
@@ -462,8 +460,7 @@ if uploaded_file is not None:
         fuera_tiempo_pd,
         pendiente_en_tiempo, 
         pendiente_ultimo_dia,
-        pendiente_fuera_tiempo,
-        pendiente_sin_datos
+        pendiente_fuera_tiempo
     ]
     
     # Colores en orden correcto
@@ -481,8 +478,7 @@ if uploaded_file is not None:
             "Entregada - Fuera de Tiempo (PD)": "#e74c3c",
             "Pendiente - En Tiempo": "#ffc107",
             "Pendiente - Último Día": "#fd7e14",
-            "Pendiente - Fuera de Tiempo": "#6c757d",
-            "Pendiente - Sin datos": "#17a2b8"
+            "Pendiente - Fuera de Tiempo": "#6c757d"
         },
         hole=0.4
     )
@@ -685,7 +681,7 @@ if uploaded_file is not None:
             en_tiempo, en_tiempo_pd,
             fuera_tiempo, fuera_tiempo_pd,
             pendiente_en_tiempo, pendiente_ultimo_dia,
-            pendiente_fuera_tiempo, pendiente_sin_datos,
+            pendiente_fuera_tiempo,
             f"{((en_tiempo + en_tiempo_pd)/entregados*100):.2f}%" if entregados > 0 else "0%"
         ]
     }
@@ -712,7 +708,7 @@ if uploaded_file is not None:
             ["Pendiente - En Tiempo", pendiente_en_tiempo],
             ["Pendiente - Último Día", pendiente_ultimo_dia],
             ["Pendiente - Fuera de Tiempo", pendiente_fuera_tiempo],
-            ["Pendiente - Sin datos", pendiente_sin_datos]
+            ["Pendiente - Sin datos"]
         ]
         
         # Escribir datos para el gráfico de torta
@@ -798,8 +794,7 @@ if uploaded_file is not None:
             f"• Entregada - Fuera de Tiempo (PD): {fuera_tiempo_pd}",
             f"• Pendiente - En Tiempo: {pendiente_en_tiempo}",
             f"• Pendiente - Último Día: {pendiente_ultimo_dia}",
-            f"• Pendiente - Fuera de Tiempo: {pendiente_fuera_tiempo}",
-            f"• Pendiente - Sin datos: {pendiente_sin_datos}"
+            f"• Pendiente - Fuera de Tiempo: {pendiente_fuera_tiempo}"
         ]
         
         if entregados > 0:
