@@ -222,11 +222,12 @@ if uploaded_file is not None:
         axis=1
     )
     
-    # Determinar cumplimiento (incluyendo condición ED y Condición de venta)
+    # Determinar cumplimiento (CORREGIDO para pendientes)
     def determinar_cumplimiento(row):
         estado = str(row['Estado']).lower()
         ed = str(row.get('ED', '')).upper() if 'ED' in df.columns else 'SI'
         condicion_venta = str(row.get('Condición de venta', '')).upper() if 'Condición de venta' in df.columns else ''
+        fecha_ultimo_estado = row['Fecha último estado']
         
         # Si ED es "NO" y estado es "esperando retiro"
         if ed == "NO" and "esperando retiro" in estado:
@@ -250,11 +251,15 @@ if uploaded_file is not None:
                 return "Entregada - Fuera de Tiempo"
         
         else:
-            # Para pendientes: comparar días transcurridos vs prometidos
-            if pd.notna(row['Lead Time']):
-                if row['Lead Time'] < row['Días Prometidos']:
+            # Para pendientes: comparar días DESDE ÚLTIMO ESTADO hasta HOY vs prometidos
+            if pd.notna(fecha_ultimo_estado):
+                dias_desde_ultimo_estado = calcular_dias_habiles(fecha_ultimo_estado, datetime.now())
+                if dias_desde_ultimo_estado is None:
+                    return "Pendiente - Sin datos"
+                
+                if dias_desde_ultimo_estado < row['Días Prometidos']:
                     return "Pendiente - En Tiempo"
-                elif row['Lead Time'] == row['Días Prometidos']:
+                elif dias_desde_ultimo_estado == row['Días Prometidos']:
                     return "Pendiente - Último Día"
                 else:
                     return "Pendiente - Fuera de Tiempo"
@@ -263,12 +268,18 @@ if uploaded_file is not None:
     
     df['Cumplimiento'] = df.apply(determinar_cumplimiento, axis=1)
     
-    # Calcular días restantes para pendientes en tiempo
+    # Calcular días restantes para pendientes en tiempo (CORREGIDO)
     def calcular_dias_restantes(row):
         cumplimiento = str(row['Cumplimiento'])
+        fecha_ultimo_estado = row['Fecha último estado']
+        
         if "Pendiente" in cumplimiento and "Fuera" not in cumplimiento and "Sin datos" not in cumplimiento:
-            restantes = row['Días Prometidos'] - row['Lead Time']
-            return f"{int(restantes)} días restantes" if restantes > 0 else "Vence hoy"
+            if pd.notna(fecha_ultimo_estado):
+                dias_desde_ultimo_estado = calcular_dias_habiles(fecha_ultimo_estado, datetime.now())
+                if dias_desde_ultimo_estado is None:
+                    return ""
+                restantes = row['Días Prometidos'] - dias_desde_ultimo_estado
+                return f"{int(restantes)} días restantes" if restantes > 0 else "Vence hoy"
         return ""
     
     df['Días Restantes'] = df.apply(calcular_dias_restantes, axis=1)
