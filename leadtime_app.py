@@ -203,7 +203,7 @@ if uploaded_file is not None:
 
     df['Días Prometidos'] = df.apply(determinar_dias_prometidos, axis=1)
     
-    # --- CORRECCIÓN: CÁLCULO DE LEAD TIME PARA PENDIENTES ---
+    # --- CÁLCULO DE LEAD TIME ---
     def calcular_lead_time(row):
         estado = str(row['Estado']).lower()
         ed = str(row.get('ED', '')).upper() if 'ED' in df.columns else 'SI'
@@ -236,7 +236,7 @@ if uploaded_file is not None:
         axis=1
     )
     
-    # --- CORRECCIÓN: CÁLCULO DE CUMPLIMIENTO PARA PENDIENTES ---
+    # --- CÁLCULO DE CUMPLIMIENTO (SIN "PENDIENTE - SIN DATOS") ---
     def determinar_cumplimiento(row):
         estado = str(row['Estado']).lower()
         ed = str(row.get('ED', '')).upper() if 'ED' in df.columns else 'SI'
@@ -264,7 +264,7 @@ if uploaded_file is not None:
                 return "Entregada - Fuera de Tiempo"
         
         else:
-            # Para pendientes: usar el lead time calculado (que ahora es hasta hoy)
+            # Para pendientes: SIEMPRE asignar a una categoría, nunca "Sin datos"
             if pd.notna(row['Lead Time']):
                 if row['Lead Time'] < row['Días Prometidos']:
                     return "Pendiente - En Tiempo"
@@ -273,15 +273,16 @@ if uploaded_file is not None:
                 else:
                     return "Pendiente - Fuera de Tiempo"
             else:
-                return "Pendiente - Sin datos"
+                # Si no hay lead time, asignar a "Pendiente - Fuera de Tiempo" por seguridad
+                return "Pendiente - Fuera de Tiempo"
     
     df['Cumplimiento'] = df.apply(determinar_cumplimiento, axis=1)
     
-    # Calcular días restantes para pendientes en tiempo (CORREGIDO)
+    # Calcular días restantes para pendientes en tiempo
     def calcular_dias_restantes(row):
         cumplimiento = str(row['Cumplimiento'])
         
-        if "Pendiente" in cumplimiento and "Fuera" not in cumplimiento and "Sin datos" not in cumplimiento:
+        if "Pendiente" in cumplimiento and "Fuera" not in cumplimiento:
             restantes = row['Días Prometidos'] - row['Lead Time']
             return f"{int(restantes)} días restantes" if restantes > 0 else "Vence hoy"
         return ""
@@ -289,7 +290,6 @@ if uploaded_file is not None:
     df['Días Restantes'] = df.apply(calcular_dias_restantes, axis=1)
     
     # --- ALERTA DE DEVOLUCIÓN ---
-    # Para pedidos con ED="NO" y estado "Esperando retiro" con más de 15 días hábiles desde la fecha último estado
     def alerta_devolucion(row):
         estado = str(row['Estado']).lower()
         ed = str(row.get('ED', '')).upper() if 'ED' in df.columns else 'SI'
@@ -310,14 +310,13 @@ if uploaded_file is not None:
         
         if "redespacho" in estado and pd.notna(fecha_ultimo_estado):
             dias_desde_ultimo_estado = calcular_dias_habiles(fecha_ultimo_estado, datetime.now())
-            if dias_desde_ultimo_estado is not None and dias_desde_ultimo_estado >= 2:  # 2 días hábiles = 48 horas
+            if dias_desde_ultimo_estado is not None and dias_desde_ultimo_estado >= 2:
                 return "Redespacho demorado"
         return ""
     
     df['Alerta Redespacho'] = df.apply(alerta_redespacho, axis=1)
     
     # --- ALERTA PENDIENTE FUERA DE TIEMPO ---
-    # Para pedidos con estado "Pendiente - Fuera de Tiempo"
     def alerta_pendiente_fuera_tiempo(row):
         cumplimiento = str(row['Cumplimiento'])
         
@@ -328,7 +327,6 @@ if uploaded_file is not None:
     df['Alerta Pendiente Fuera Tiempo'] = df.apply(alerta_pendiente_fuera_tiempo, axis=1)
     
     # --- ALERTA DE PAGO PENDIENTE ---
-    # Para pedidos con Condición de venta = "PD" y estado "Esperando retiro" con más de 5 días hábiles desde la fecha último estado
     def alerta_pago_pendiente(row):
         estado = str(row['Estado']).lower()
         condicion_venta = str(row.get('Condición de venta', '')).upper() if 'Condición de venta' in df.columns else ''
@@ -345,52 +343,52 @@ if uploaded_file is not None:
     # --- FILTROS ---
     st.sidebar.header("🔍 Filtros")
 
-    # Filtro por Cliente (con verificación)
+    # Filtro por Cliente
     if 'Cliente' in df.columns:
         clientes = sorted(df['Cliente'].dropna().unique())
         cliente_seleccionado = st.sidebar.selectbox("Cliente", ["Todos"] + clientes)
     else:
-        st.error("❌ La columna 'Cliente' no existe en el archivo. Verifica el nombre de las columnas.")
+        st.error("❌ La columna 'Cliente' no existe en el archivo.")
         st.stop()
 
-    # Filtro por Subcuenta (con verificación)
+    # Filtro por Subcuenta
     if 'Subcuenta' in df.columns:
         subcuentas = sorted(df['Subcuenta'].dropna().unique())
         subcuenta_seleccionada = st.sidebar.selectbox("Subcuenta", ["Todas"] + subcuentas)
     else:
-        st.error("❌ La columna 'Subcuenta' no existe en el archivo. Verifica el nombre de las columnas.")
+        st.error("❌ La columna 'Subcuenta' no existe en el archivo.")
         st.stop()
 
-    # Filtro por Agencia origen (con verificación)
+    # Filtro por Agencia origen
     if 'Agencia origen' in df.columns:
         agencias_origen = sorted(df['Agencia origen'].dropna().unique())
         agencia_origen_seleccionada = st.sidebar.selectbox("Agencia origen", ["Todas"] + agencias_origen)
     else:
-        st.warning("⚠️ La columna 'Agencia origen' no existe en el archivo. Se omitirá este filtro.")
+        st.warning("⚠️ La columna 'Agencia origen' no existe. Se omitirá este filtro.")
         agencia_origen_seleccionada = "Todas"
 
-    # Filtro por Agencia destino (con verificación)
+    # Filtro por Agencia destino
     if 'Agencia destino' in df.columns:
         agencias = sorted(df['Agencia destino'].dropna().unique())
         agencia_seleccionada = st.sidebar.selectbox("Agencia destino", ["Todas"] + agencias)
     else:
-        st.error("❌ La columna 'Agencia destino' no existe en el archivo. Verifica el nombre de las columnas.")
+        st.error("❌ La columna 'Agencia destino' no existe en el archivo.")
         st.stop()
 
-    # Filtro por ED (con verificación)
+    # Filtro por ED
     if 'ED' in df.columns:
         ed_opciones = sorted(df['ED'].dropna().unique())
         ed_seleccionada = st.sidebar.selectbox("Entrega a Domicilio (ED)", ["Todas"] + ed_opciones)
     else:
-        st.warning("⚠️ La columna 'ED' no existe en el archivo. Se omitirá este filtro.")
+        st.warning("⚠️ La columna 'ED' no existe. Se omitirá este filtro.")
         ed_seleccionada = "Todas"
 
-    # Filtro por Condición de venta (con verificación)
+    # Filtro por Condición de venta
     if 'Condición de venta' in df.columns:
         condiciones_venta = sorted(df['Condición de venta'].dropna().unique())
         condicion_venta_seleccionada = st.sidebar.selectbox("Condición de venta", ["Todas"] + condiciones_venta)
     else:
-        st.warning("⚠️ La columna 'Condición de venta' no existe en el archivo. Se omitirá este filtro.")
+        st.warning("⚠️ La columna 'Condición de venta' no existe. Se omitirá este filtro.")
         condicion_venta_seleccionada = "Todas"
 
     # Aplicar filtros
@@ -406,20 +404,20 @@ if uploaded_file is not None:
     if agencia_seleccionada != "Todas":
         df = df[df['Agencia destino'] == agencia_seleccionada]
 
-    if 'ED' in df.columns and 'ed_seleccionada' in locals() and ed_seleccionada != "Todas":
+    if 'ED' in df.columns and ed_seleccionada != "Todas":
         df = df[df['ED'] == ed_seleccionada]
 
     if 'Condición de venta' in df.columns and condicion_venta_seleccionada != "Todas":
         df = df[df['Condición de venta'] == condicion_venta_seleccionada]
     
-    # --- ESTADÍSTICAS ---
+    # --- ESTADÍSTICAS (SIN "PENDIENTE - SIN DATOS") ---
     st.header("📈 Estadísticas")
     
     total_pedidos = df.shape[0]
     entregados = df[df['Cumplimiento'].str.startswith("Entregada")].shape[0]
     pendientes = total_pedidos - entregados
     
-    # Clasificación detallada
+    # Clasificación detallada (SIN "Pendiente - Sin datos")
     en_tiempo = df[df['Cumplimiento'] == "Entregada - En Tiempo"].shape[0]
     en_tiempo_pd = df[df['Cumplimiento'] == "Entregada - En Tiempo (PD: Pago Pendiente)"].shape[0]
     fuera_tiempo = df[df['Cumplimiento'] == "Entregada - Fuera de Tiempo"].shape[0]
@@ -442,7 +440,7 @@ if uploaded_file is not None:
         else:
             st.metric("🎯 % Cumplimiento", "0%")
     
-    # Gráfico de torta - Cumplimiento general
+    # Gráfico de torta - Cumplimiento general (SIN "Pendiente - Sin datos")
     cumplimiento_labels = [
         "Entregada - En Tiempo", 
         "Entregada - En Tiempo (PD)",
@@ -463,8 +461,8 @@ if uploaded_file is not None:
         pendiente_fuera_tiempo
     ]
     
-    # Colores en orden correcto
-    colores = ["#28a745", "#2ecc71", "#dc3545", "#e74c3c", "#ffc107", "#fd7e14", "#6c757d", "#17a2b8"]
+    # Colores en orden correcto (sin el último color para "Sin datos")
+    colores = ["#28a745", "#2ecc71", "#dc3545", "#e74c3c", "#ffc107", "#fd7e14", "#6c757d"]
     
     fig1 = px.pie(
         names=cumplimiento_labels,
@@ -485,26 +483,25 @@ if uploaded_file is not None:
     fig1.update_traces(textinfo='percent+value', textposition='inside')
     st.plotly_chart(fig1, use_container_width=True)
     
-    # Gráfico por Localidad (Top 10 con más fuera de tiempo) - BARRAS HORIZONTALES
+    # Gráfico por Localidad (Top 10 con más fuera de tiempo)
     fuera_tiempo_df = df[df['Cumplimiento'].str.contains("Fuera", na=False)]
     if not fuera_tiempo_df.empty:
         top_localidades = fuera_tiempo_df['Loc'].value_counts().head(10)
         
-        # Crear gráfico de barras horizontales
         fig2 = px.bar(
             y=top_localidades.index,
             x=top_localidades.values,
             labels={'x': 'Pedidos Fuera de Tiempo', 'y': 'Localidad'},
             title="Top 10 Localidades con Más Pedidos Fuera de Tiempo",
             color_discrete_sequence=["#dc3545"],
-            orientation='h'  # Barras horizontales
+            orientation='h'
         )
         fig2.update_traces(texttemplate='%{x}', textposition='outside')
         st.plotly_chart(fig2, use_container_width=True)
     else:
         st.info("No hay pedidos fuera de tiempo para mostrar.")
     
-    # Gráfico por Producto - BARRAS HORIZONTALES
+    # Gráfico por Producto
     if 'Producto' in df.columns:
         servicio_stats = df.groupby('Producto')['Cumplimiento'].value_counts().unstack(fill_value=0)
         
@@ -531,12 +528,12 @@ if uploaded_file is not None:
         for i, categoria in enumerate(cumplimiento_labels):
             fig3.add_trace(go.Bar(
                 name=categoria,
-                y=servicio_stats.index,  # Productos en el eje Y
-                x=servicio_stats[categoria],  # Cantidad en el eje X
+                y=servicio_stats.index,
+                x=servicio_stats[categoria],
                 text=servicio_texto[categoria],
                 textposition='auto',
                 marker_color=colores[i],
-                orientation='h'  # Orientación horizontal
+                orientation='h'
             ))
         
         fig3.update_layout(
@@ -544,7 +541,7 @@ if uploaded_file is not None:
             barmode='stack',
             yaxis_title="Producto",
             xaxis_title="Cantidad de Pedidos",
-            height=600  # Altura fija para mejor visualización
+            height=600
         )
         
         st.plotly_chart(fig3, use_container_width=True)
@@ -666,14 +663,14 @@ if uploaded_file is not None:
     # Preparar Excel con gráficos
     output_excel = io.BytesIO()
 
-    # Crear datos para el gráfico de estadísticas
+    # Crear datos para el gráfico de estadísticas (SIN "Pendiente - Sin datos")
     stats_data = {
         "Métrica": [
             "Total Pedidos", "Entregados", "Pendientes",
             "Entregada - En Tiempo", "Entregada - En Tiempo (PD)",
             "Entregada - Fuera de Tiempo", "Entregada - Fuera de Tiempo (PD)",
             "Pendiente - En Tiempo", "Pendiente - Último Día",
-            "Pendiente - Fuera de Tiempo", "Pendiente - Sin datos",
+            "Pendiente - Fuera de Tiempo",
             "% Cumplimiento (solo entregados)"
         ],
         "Valor": [
@@ -685,7 +682,14 @@ if uploaded_file is not None:
             f"{((en_tiempo + en_tiempo_pd)/entregados*100):.2f}%" if entregados > 0 else "0%"
         ]
     }
-    stats_df = pd.DataFrame(stats_data)
+    
+    # Verificar que las longitudes coincidan antes de crear el DataFrame
+    if len(stats_data["Métrica"]) == len(stats_data["Valor"]):
+        stats_df = pd.DataFrame(stats_data)
+    else:
+        st.error("❌ Error: Las listas de estadísticas tienen longitudes diferentes")
+        # Crear un DataFrame de respaldo
+        stats_df = pd.DataFrame({"Métrica": ["Error en estadísticas"], "Valor": ["Contactar al administrador"]})
     
     # Guardar en Excel
     with pd.ExcelWriter(output_excel, engine='openpyxl') as writer:
@@ -698,7 +702,7 @@ if uploaded_file is not None:
         workbook = writer.book
         worksheet = writer.sheets["Estadísticas"]
         
-        # Crear datos para el gráfico de torta
+        # Crear datos para el gráfico de torta (SIN "Pendiente - Sin datos")
         pie_data = [
             ["Categoría", "Cantidad"],
             ["Entregada - En Tiempo", en_tiempo],
@@ -707,8 +711,7 @@ if uploaded_file is not None:
             ["Entregada - Fuera de Tiempo (PD)", fuera_tiempo_pd],
             ["Pendiente - En Tiempo", pendiente_en_tiempo],
             ["Pendiente - Último Día", pendiente_ultimo_dia],
-            ["Pendiente - Fuera de Tiempo", pendiente_fuera_tiempo],
-            ["Pendiente - Sin datos"]
+            ["Pendiente - Fuera de Tiempo", pendiente_fuera_tiempo]
         ]
         
         # Escribir datos para el gráfico de torta
@@ -721,15 +724,15 @@ if uploaded_file is not None:
         pie_chart.title = "Distribución de Cumplimiento"
         
         # Referencias a los datos
-        labels = Reference(worksheet, min_col=6, min_row=16, max_row=24)
-        data = Reference(worksheet, min_col=7, min_row=15, max_row=24)
+        labels = Reference(worksheet, min_col=6, min_row=16, max_row=23)  # Ajustado a 23 (sin la última fila)
+        data = Reference(worksheet, min_col=7, min_row=15, max_row=23)   # Ajustado a 23 (sin la última fila)
         
         # Añadir datos al gráfico
         pie_chart.add_data(data, titles_from_data=True)
         pie_chart.set_categories(labels)
         
         # Estilo del gráfico
-        pie_chart.style = 10  # Estilo predefinido
+        pie_chart.style = 10
         
         # Añadir etiquetas de datos
         pie_chart.dataLabels = DataLabelList()
@@ -737,10 +740,11 @@ if uploaded_file is not None:
         pie_chart.dataLabels.showVal = True
         pie_chart.dataLabels.showCatName = True
         
-        # Colores personalizados
-        colors = ['28a745', '2ecc71', 'dc3545', 'e74c3c', 'ffc107', 'fd7e14', '6c757d', '17a2b8']
+        # Colores personalizados (7 colores en lugar de 8)
+        colors = ['28a745', '2ecc71', 'dc3545', 'e74c3c', 'ffc107', 'fd7e14', '6c757d']
         for i, point in enumerate(pie_chart.series[0].data_points):
-            point.graphicalProperties.solidFill = colors[i]
+            if i < len(colors):
+                point.graphicalProperties.solidFill = colors[i]
         
         # Añadir gráfico a la hoja
         worksheet.add_chart(pie_chart, "D15")
@@ -819,8 +823,6 @@ if uploaded_file is not None:
                 p.font.color.rgb = RGBColor(253, 126, 20)
             elif "Pendiente - Fuera de Tiempo" in metric:
                 p.font.color.rgb = RGBColor(108, 117, 125)
-            elif "Pendiente - Sin datos" in metric:
-                p.font.color.rgb = RGBColor(23, 162, 184)
         
         # Slide 3: Gráfico de Cumplimiento
         slide_layout = prs.slide_layouts[5]
