@@ -18,7 +18,7 @@ from openpyxl.styles import PatternFill
 from openpyxl.chart.label import DataLabelList
 import numpy as np
 import unicodedata
-import pytz  # ← IMPORTANTE: Agregar para manejo de zonas horarias
+import pytz  # Para manejo de zonas horarias
 
 # --- CONFIGURACIÓN DE ZONA HORARIA ---
 # Definir la zona horaria de Argentina
@@ -49,10 +49,20 @@ def es_dia_habil(fecha):
 def calcular_dias_habiles(fecha_inicio, fecha_fin):
     if pd.isna(fecha_inicio) or pd.isna(fecha_fin):
         return None
+    
+    # Convertir ambos a timezone-naive para comparar
+    if hasattr(fecha_inicio, 'tz') and fecha_inicio.tz is not None:
+        fecha_inicio = fecha_inicio.replace(tzinfo=None)
+    if hasattr(fecha_fin, 'tz') and fecha_fin.tz is not None:
+        fecha_fin = fecha_fin.replace(tzinfo=None)
+    
+    # Extraer solo la parte de fecha
+    fecha_inicio = fecha_inicio.date() if hasattr(fecha_inicio, 'date') else fecha_inicio
+    fecha_fin = fecha_fin.date() if hasattr(fecha_fin, 'date') else fecha_fin
+    
     if fecha_inicio > fecha_fin:
         return 0
-    fecha_inicio = fecha_inicio.date()
-    fecha_fin = fecha_fin.date()
+    
     dias = 0
     current = fecha_inicio
     while current <= fecha_fin:
@@ -212,33 +222,37 @@ if uploaded_file is not None:
 
     df['Días Prometidos'] = df.apply(determinar_dias_prometidos, axis=1)
     
-    # --- CÁLCULO DE LEAD TIME CORREGIDO CON ZONA HORARIA ARGENTINA ---
+    # --- CÁLCULO DE LEAD TIME CORREGIDO ---
     def calcular_lead_time(row):
-        estado = str(row['Estado']).lower()
-        ed = str(row.get('ED', '')).upper() if 'ED' in df.columns else 'SI'
+        try:
+            estado = str(row['Estado']).lower()
+            ed = str(row.get('ED', '')).upper() if 'ED' in df.columns else 'SI'
+            
+            # Determinar si el pedido está entregado
+            entregado = (
+                (ed == "NO" and "esperando retiro" in estado) or 
+                "entregada" in estado
+            )
+            
+            # Usar la fecha actual de Argentina (sin timezone para compatibilidad)
+            fecha_actual_argentina = obtener_fecha_actual_argentina().replace(tzinfo=None)
+            
+            if entregado:
+                # Para pedidos ENTREGADOS: calcular desde creación hasta último estado
+                lead_time = calcular_dias_habiles(row['Fecha'], row['Fecha último estado'])
+            else:
+                # Para pedidos PENDIENTES: calcular desde creación hasta HOY
+                lead_time = calcular_dias_habiles(row['Fecha'], fecha_actual_argentina)
+            
+            # Aplicar día de gracia para Delivery Hero Riders
+            if row.get('Cliente', '') == "DELIVERY HERO E-COMMERCE S.A." and row.get('Subcuenta', '') == "RIDERS":
+                if pd.notna(lead_time) and lead_time > 0:
+                    lead_time = max(0, lead_time - 1)
+            
+            return lead_time
         
-        # Determinar si el pedido está entregado
-        entregado = (
-            (ed == "NO" and "esperando retiro" in estado) or 
-            "entregada" in estado
-        )
-        
-        # Usar la fecha actual de Argentina
-        fecha_actual_argentina = obtener_fecha_actual_argentina()
-        
-        if entregado:
-            # Para pedidos ENTREGADOS: calcular desde creación hasta último estado
-            lead_time = calcular_dias_habiles(row['Fecha'], row['Fecha último estado'])
-        else:
-            # Para pedidos PENDIENTES: calcular desde creación hasta HOY (usando hora de Argentina)
-            lead_time = calcular_dias_habiles(row['Fecha'], fecha_actual_argentina)
-        
-        # Aplicar día de gracia para Delivery Hero Riders
-        if row.get('Cliente', '') == "DELIVERY HERO E-COMMERCE S.A." and row.get('Subcuenta', '') == "RIDERS":
-            if pd.notna(lead_time) and lead_time > 0:
-                lead_time = max(0, lead_time - 1)  # No permitir valores negativos
-        
-        return lead_time
+        except Exception as e:
+            return None
 
     df['Lead Time'] = df.apply(calcular_lead_time, axis=1)
     
@@ -295,41 +309,48 @@ if uploaded_file is not None:
         cumplimiento = str(row['Cumplimiento'])
         
         if "Pendiente" in cumplimiento and "Fuera" not in cumplimiento:
-            restantes = row['Días Prometidos'] - row['Lead Time']
-            return f"{int(restantes)} días restantes" if restantes > 0 else "Vence hoy"
+            if pd.notna(row['Lead Time']):
+                restantes = row['Días Prometidos'] - row['Lead Time']
+                return f"{int(restantes)} días restantes" if restantes > 0 else "Vence hoy"
         return ""
     
     df['Días Restantes'] = df.apply(calcular_dias_restantes, axis=1)
     
     # --- ALERTA DE DEVOLUCIÓN (CORREGIDA CON ZONA HORARIA ARGENTINA) ---
     def alerta_devolucion(row):
-        estado = str(row['Estado']).lower()
-        ed = str(row.get('ED', '')).upper() if 'ED' in df.columns else 'SI'
-        fecha_ultimo_estado = row['Fecha último estado']
-        
-        if ed == "NO" and "esperando retiro" in estado and pd.notna(fecha_ultimo_estado):
-            # Usar fecha actual de Argentina
-            fecha_actual_argentina = obtener_fecha_actual_argentina()
-            dias_desde_ultimo_estado = calcular_dias_habiles(fecha_ultimo_estado, fecha_actual_argentina)
-            if dias_desde_ultimo_estado is not None and dias_desde_ultimo_estado >= 15:
-                return "Sugerir devolución"
-        return ""
-    
+        try:
+            estado = str(row['Estado']).lower()
+            ed = str(row.get('ED', '')).upper() if 'ED' in df.columns else 'SI'
+            fecha_ultimo_estado = row['Fecha último estado']
+            
+            if ed == "NO" and "esperando retiro" in estado and pd.notna(fecha_ultimo_estado):
+                # Usar fecha actual de Argentina (sin timezone)
+                fecha_actual_argentina = obtener_fecha_actual_argentina().replace(tzinfo=None)
+                dias_desde_ultimo_estado = calcular_dias_habiles(fecha_ultimo_estado, fecha_actual_argentina)
+                if dias_desde_ultimo_estado is not None and dias_desde_ultimo_estado >= 15:
+                    return "Sugerir devolución"
+            return ""
+        except Exception as e:
+            return ""
+
     df['Alerta Devolución'] = df.apply(alerta_devolucion, axis=1)
     
     # --- ALERTA DE REDESPACHO (CORREGIDA CON ZONA HORARIA ARGENTINA) ---
     def alerta_redespacho(row):
-        estado = str(row['Estado']).lower()
-        fecha_ultimo_estado = row['Fecha último estado']
-        
-        if "redespacho" in estado and pd.notna(fecha_ultimo_estado):
-            # Usar fecha actual de Argentina
-            fecha_actual_argentina = obtener_fecha_actual_argentina()
-            dias_desde_ultimo_estado = calcular_dias_habiles(fecha_ultimo_estado, fecha_actual_argentina)
-            if dias_desde_ultimo_estado is not None and dias_desde_ultimo_estado >= 2:
-                return "Redespacho demorado"
-        return ""
-    
+        try:
+            estado = str(row['Estado']).lower()
+            fecha_ultimo_estado = row['Fecha último estado']
+            
+            if "redespacho" in estado and pd.notna(fecha_ultimo_estado):
+                # Usar fecha actual de Argentina (sin timezone)
+                fecha_actual_argentina = obtener_fecha_actual_argentina().replace(tzinfo=None)
+                dias_desde_ultimo_estado = calcular_dias_habiles(fecha_ultimo_estado, fecha_actual_argentina)
+                if dias_desde_ultimo_estado is not None and dias_desde_ultimo_estado >= 2:
+                    return "Redespacho demorado"
+            return ""
+        except Exception as e:
+            return ""
+
     df['Alerta Redespacho'] = df.apply(alerta_redespacho, axis=1)
     
     # --- ALERTA PENDIENTE FUERA DE TIEMPO ---
@@ -344,18 +365,21 @@ if uploaded_file is not None:
     
     # --- ALERTA DE PAGO PENDIENTE (CORREGIDA CON ZONA HORARIA ARGENTINA) ---
     def alerta_pago_pendiente(row):
-        estado = str(row['Estado']).lower()
-        condicion_venta = str(row.get('Condición de venta', '')).upper() if 'Condición de venta' in df.columns else ''
-        fecha_ultimo_estado = row['Fecha último estado']
-        
-        if condicion_venta == "PD" and "esperando retiro" in estado and pd.notna(fecha_ultimo_estado):
-            # Usar fecha actual de Argentina
-            fecha_actual_argentina = obtener_fecha_actual_argentina()
-            dias_desde_ultimo_estado = calcular_dias_habiles(fecha_ultimo_estado, fecha_actual_argentina)
-            if dias_desde_ultimo_estado is not None and dias_desde_ultimo_estado >= 5:
-                return "Pago pendiente demorado"
-        return ""
-    
+        try:
+            estado = str(row['Estado']).lower()
+            condicion_venta = str(row.get('Condición de venta', '')).upper() if 'Condición de venta' in df.columns else ''
+            fecha_ultimo_estado = row['Fecha último estado']
+            
+            if condicion_venta == "PD" and "esperando retiro" in estado and pd.notna(fecha_ultimo_estado):
+                # Usar fecha actual de Argentina (sin timezone)
+                fecha_actual_argentina = obtener_fecha_actual_argentina().replace(tzinfo=None)
+                dias_desde_ultimo_estado = calcular_dias_habiles(fecha_ultimo_estado, fecha_actual_argentina)
+                if dias_desde_ultimo_estado is not None and dias_desde_ultimo_estado >= 5:
+                    return "Pago pendiente demorado"
+            return ""
+        except Exception as e:
+            return ""
+
     df['Alerta Pago Pendiente'] = df.apply(alerta_pago_pendiente, axis=1)
     
     # --- MOSTRAR INFORMACIÓN DE FECHAS EN SIDEBAR ---
