@@ -187,7 +187,7 @@ def determinar_zona(localidad_destino):
 # --- INTERFAZ STREAMLIT ---
 st.set_page_config(page_title="Calculadora de Lead Time", layout="wide")
 
-st.title("📊 Calculadora de Lead Time")
+st.title("📊 Calculadora de Lead Time - Indicadores Mejorados")
 st.markdown("Sube tu reporte diario y obtén estadísticas + PPT listo para presentar.")
 
 uploaded_file = st.file_uploader("📂 Sube tu archivo Excel", type=["xlsx", "xls"])
@@ -262,11 +262,12 @@ if uploaded_file is not None:
         axis=1
     )
     
-    # --- CÁLCULO DE CUMPLIMIENTO (CON CATEGORÍA "DEVUELTO") ---
-    def determinar_cumplimiento(row):
+    # --- CÁLCULO DE CUMPLIMIENTO MEJORADO (CON VISITAS Y ACCIONES) ---
+    def determinar_cumplimiento_mejorado(row):
         estado = str(row['Estado']).lower()
         ed = str(row.get('ED', '')).upper() if 'ED' in df.columns else 'SI'
         condicion_venta = str(row.get('Condición de venta', '')).upper() if 'Condición de venta' in df.columns else ''
+        visitas = row.get('Visitas', 0) if 'Visitas' in df.columns else 0
         
         # PRIMERO: Verificar si es una devolución (estado cerrado)
         if "devolución informada" in estado or "devolucion informada" in estado:
@@ -275,7 +276,6 @@ if uploaded_file is not None:
         # Si ED es "NO" y estado es "esperando retiro"
         if ed == "NO" and "esperando retiro" in estado:
             if pd.notna(row['Lead Time']) and row['Lead Time'] <= row['Días Prometidos']:
-                # Si condición de venta es PD, marcar como entregada pero con nota
                 if condicion_venta == "PD":
                     return "Entregada - En Tiempo (PD: Pago Pendiente)"
                 else:
@@ -294,7 +294,40 @@ if uploaded_file is not None:
                 return "Entregada - Fuera de Tiempo"
         
         else:
-            # Para pendientes: SIEMPRE asignar a una categoría, nunca "Sin datos"
+            # --- NUEVA LÓGICA: PEDIDOS PENDIENTES CON VISITAS ---
+            # Calcular días desde la última visita hasta hoy
+            fecha_actual_argentina = obtener_fecha_actual_argentina().replace(tzinfo=None)
+            dias_desde_ultima_visita = calcular_dias_habiles(row['Fecha último estado'], fecha_actual_argentina) if pd.notna(row['Fecha último estado']) else None
+            
+            # Verificar si tuvo al menos una visita dentro del tiempo prometido
+            lead_time_hasta_visita = calcular_dias_habiles(row['Fecha'], row['Fecha último estado']) if pd.notna(row['Fecha último estado']) else None
+            
+            # Estados que indican una visita
+            estados_visita = [
+                "visita a domicilio", "reprogramada", "domicilio incompleto", 
+                "domicilio incorrecto", "ausente", "rechazado"
+            ]
+            
+            es_estado_visita = any(estado_visita in estado for estado_visita in estados_visita)
+            
+            if es_estado_visita and visitas > 0 and pd.notna(lead_time_hasta_visita):
+                if lead_time_hasta_visita <= row['Días Prometidos']:
+                    # Tuvo visita en tiempo, pero requiere acción según el motivo
+                    if "domicilio incompleto" in estado:
+                        return "Pendiente - Visita en Tiempo (Datos Incompletos)"
+                    elif "domicilio incorrecto" in estado:
+                        return "Pendiente - Visita en Tiempo (Domicilio Incorrecto)"
+                    elif "ausente" in estado:
+                        return "Pendiente - Visita en Tiempo (Cliente Ausente)"
+                    elif "rechazado" in estado:
+                        return "Pendiente - Visita en Tiempo (Cliente Rechazó)"
+                    else:
+                        return "Pendiente - Visita en Tiempo"
+                else:
+                    # Visita fuera de tiempo
+                    return "Pendiente - Visita Fuera de Tiempo"
+            
+            # Para pendientes sin visita específica
             if pd.notna(row['Lead Time']):
                 if row['Lead Time'] < row['Días Prometidos']:
                     return "Pendiente - En Tiempo"
@@ -303,16 +336,15 @@ if uploaded_file is not None:
                 else:
                     return "Pendiente - Fuera de Tiempo"
             else:
-                # Si no hay lead time, asignar a "Pendiente - Fuera de Tiempo" por seguridad
                 return "Pendiente - Fuera de Tiempo"
     
-    df['Cumplimiento'] = df.apply(determinar_cumplimiento, axis=1)
+    df['Cumplimiento'] = df.apply(determinar_cumplimiento_mejorado, axis=1)
     
     # Calcular días restantes para pendientes en tiempo
     def calcular_dias_restantes(row):
         cumplimiento = str(row['Cumplimiento'])
         
-        if "Pendiente" in cumplimiento and "Fuera" not in cumplimiento:
+        if "Pendiente" in cumplimiento and "Fuera" not in cumplimiento and "Visita" not in cumplimiento:
             if pd.notna(row['Lead Time']):
                 restantes = row['Días Prometidos'] - row['Lead Time']
                 return f"{int(restantes)} días restantes" if restantes > 0 else "Vence hoy"
@@ -320,7 +352,89 @@ if uploaded_file is not None:
     
     df['Días Restantes'] = df.apply(calcular_dias_restantes, axis=1)
     
-    # --- ALERTA DE DEVOLUCIÓN (CORREGIDA CON ZONA HORARIA ARGENTINA) ---
+    # --- NUEVAS ALERTAS MEJORADAS ---
+    
+    # Alerta para visitas en tiempo pero sin seguimiento
+    def alerta_visita_sin_seguimiento(row):
+        try:
+            estado = str(row['Estado']).lower()
+            cumplimiento = str(row['Cumplimiento'])
+            fecha_ultimo_estado = row['Fecha último estado']
+            
+            # Verificar si es un pedido con visita en tiempo que requiere acción
+            if "Visita en Tiempo" in cumplimiento and pd.notna(fecha_ultimo_estado):
+                fecha_actual_argentina = obtener_fecha_actual_argentina().replace(tzinfo=None)
+                dias_desde_visita = calcular_dias_habiles(fecha_ultimo_estado, fecha_actual_argentina)
+                
+                if dias_desde_visita is not None and dias_desde_visita >= 3:
+                    if "Datos Incompletos" in cumplimiento:
+                        return "Solicitar datos completos"
+                    elif "Domicilio Incorrecto" in cumplimiento:
+                        return "Verificar domicilio"
+                    elif "Cliente Ausente" in cumplimiento:
+                        return "Coordinar nueva visita"
+                    elif "Cliente Rechazó" in cumplimiento:
+                        return "Sugerir devolución"
+                    else:
+                        return "Requiere seguimiento"
+            return ""
+        except Exception as e:
+            return ""
+
+    df['Alerta Seguimiento Visita'] = df.apply(alerta_visita_sin_seguimiento, axis=1)
+    
+    # Alerta para pedidos con múltiples visitas sin resultado
+    def alerta_visitas_multiples(row):
+        try:
+            visitas = row.get('Visitas', 0) if 'Visitas' in df.columns else 0
+            estado = str(row['Estado']).lower()
+            
+            if visitas >= 2 and ("ausente" in estado or "rechazado" in estado):
+                return "Múltiples visitas sin éxito - Evaluar devolución"
+            return ""
+        except Exception as e:
+            return ""
+
+    df['Alerta Visitas Múltiples'] = df.apply(alerta_visitas_multiples, axis=1)
+    
+    # --- NUEVA ALERTA: UNA SOLA VISITA SIN SEGUIMIENTO EN 5 DÍAS ---
+    def alerta_una_visita_sin_seguimiento(row):
+        try:
+            visitas = row.get('Visitas', 0) if 'Visitas' in df.columns else 0
+            estado = str(row['Estado']).lower()
+            fecha_ultimo_estado = row['Fecha último estado']
+            cumplimiento = str(row['Cumplimiento'])
+            
+            # Estados que indican una visita realizada
+            estados_visita = [
+                "visita a domicilio", "reprogramada", "domicilio incompleto", 
+                "domicilio incorrecto", "ausente", "rechazado"
+            ]
+            
+            es_estado_visita = any(estado_visita in estado for estado_visita in estados_visita)
+            
+            # Verificar condiciones para la alerta
+            if (visitas == 1 and 
+                es_estado_visita and 
+                pd.notna(fecha_ultimo_estado) and
+                "Visita" in cumplimiento and  # Solo para pedidos con visita
+                "Devuelto" not in cumplimiento and  # Excluir devueltos
+                "Entregada" not in cumplimiento):  # Excluir entregados
+                
+                fecha_actual_argentina = obtener_fecha_actual_argentina().replace(tzinfo=None)
+                dias_desde_visita = calcular_dias_habiles(fecha_ultimo_estado, fecha_actual_argentina)
+                
+                if dias_desde_visita is not None and dias_desde_visita >= 5:
+                    return f"1 visita hace {dias_desde_visita} días hábiles - Sin seguimiento"
+            
+            return ""
+        except Exception as e:
+            return ""
+
+    df['Alerta Una Visita Sin Seguimiento'] = df.apply(alerta_una_visita_sin_seguimiento, axis=1)
+    
+    # --- ALERTAS EXISTENTES (MANTENIDAS) ---
+    
     def alerta_devolucion(row):
         try:
             estado = str(row['Estado']).lower()
@@ -328,7 +442,6 @@ if uploaded_file is not None:
             fecha_ultimo_estado = row['Fecha último estado']
             
             if ed == "NO" and "esperando retiro" in estado and pd.notna(fecha_ultimo_estado):
-                # Usar fecha actual de Argentina (sin timezone)
                 fecha_actual_argentina = obtener_fecha_actual_argentina().replace(tzinfo=None)
                 dias_desde_ultimo_estado = calcular_dias_habiles(fecha_ultimo_estado, fecha_actual_argentina)
                 if dias_desde_ultimo_estado is not None and dias_desde_ultimo_estado >= 15:
@@ -339,14 +452,12 @@ if uploaded_file is not None:
 
     df['Alerta Devolución'] = df.apply(alerta_devolucion, axis=1)
     
-    # --- ALERTA DE REDESPACHO (CORREGIDA CON ZONA HORARIA ARGENTINA) ---
     def alerta_redespacho(row):
         try:
             estado = str(row['Estado']).lower()
             fecha_ultimo_estado = row['Fecha último estado']
             
             if "redespacho" in estado and pd.notna(fecha_ultimo_estado):
-                # Usar fecha actual de Argentina (sin timezone)
                 fecha_actual_argentina = obtener_fecha_actual_argentina().replace(tzinfo=None)
                 dias_desde_ultimo_estado = calcular_dias_habiles(fecha_ultimo_estado, fecha_actual_argentina)
                 if dias_desde_ultimo_estado is not None and dias_desde_ultimo_estado >= 2:
@@ -357,7 +468,6 @@ if uploaded_file is not None:
 
     df['Alerta Redespacho'] = df.apply(alerta_redespacho, axis=1)
     
-    # --- ALERTA PENDIENTE FUERA DE TIEMPO ---
     def alerta_pendiente_fuera_tiempo(row):
         cumplimiento = str(row['Cumplimiento'])
         
@@ -367,7 +477,6 @@ if uploaded_file is not None:
     
     df['Alerta Pendiente Fuera Tiempo'] = df.apply(alerta_pendiente_fuera_tiempo, axis=1)
     
-    # --- ALERTA DE PAGO PENDIENTE (CORREGIDA CON ZONA HORARIA ARGENTINA) ---
     def alerta_pago_pendiente(row):
         try:
             estado = str(row['Estado']).lower()
@@ -375,7 +484,6 @@ if uploaded_file is not None:
             fecha_ultimo_estado = row['Fecha último estado']
             
             if condicion_venta == "PD" and "esperando retiro" in estado and pd.notna(fecha_ultimo_estado):
-                # Usar fecha actual de Argentina (sin timezone)
                 fecha_actual_argentina = obtener_fecha_actual_argentina().replace(tzinfo=None)
                 dias_desde_ultimo_estado = calcular_dias_habiles(fecha_ultimo_estado, fecha_actual_argentina)
                 if dias_desde_ultimo_estado is not None and dias_desde_ultimo_estado >= 5:
@@ -456,75 +564,116 @@ if uploaded_file is not None:
     if 'Condición de venta' in df.columns and condicion_venta_seleccionada != "Todas":
         df = df[df['Condición de venta'] == condicion_venta_seleccionada]
     
-    # --- ESTADÍSTICAS CORREGIDAS (CON CATEGORÍA "DEVUELTO") ---
-    st.header("📈 Estadísticas Corregidas")
+    # --- ESTADÍSTICAS MEJORADAS ---
+    st.header("📊 Indicadores de Cumplimiento Mejorados")
     
     total_pedidos = df.shape[0]
     entregados = df[df['Cumplimiento'].str.startswith("Entregada")].shape[0]
     devueltos = df[df['Cumplimiento'] == "Devuelto"].shape[0]
-    # Los pendientes REALES son total - entregados - devueltos
     pendientes_reales = total_pedidos - entregados - devueltos
     
-    # Clasificación detallada (AHORA INCLUYENDO DEVUELTOS)
+    # Nuevas categorías para visitas
+    visita_en_tiempo = df[df['Cumplimiento'].str.contains("Visita en Tiempo", na=False)].shape[0]
+    visita_fuera_tiempo = df[df['Cumplimiento'] == "Pendiente - Visita Fuera de Tiempo"].shape[0]
+    
+    # Clasificación detallada
     en_tiempo = df[df['Cumplimiento'] == "Entregada - En Tiempo"].shape[0]
     en_tiempo_pd = df[df['Cumplimiento'] == "Entregada - En Tiempo (PD: Pago Pendiente)"].shape[0]
     fuera_tiempo = df[df['Cumplimiento'] == "Entregada - Fuera de Tiempo"].shape[0]
     fuera_tiempo_pd = df[df['Cumplimiento'] == "Entregada - Fuera de Tiempo (PD: Pago Pendiente)"].shape[0]
-    devuelto_count = devueltos  # Nueva categoría
+    devuelto_count = devueltos
     pendiente_en_tiempo = df[df['Cumplimiento'] == "Pendiente - En Tiempo"].shape[0]
     pendiente_fuera_tiempo = df[df['Cumplimiento'] == "Pendiente - Fuera de Tiempo"].shape[0]
     pendiente_ultimo_dia = df[df['Cumplimiento'] == "Pendiente - Último Día"].shape[0]
     
-    # Métricas principales
+    # --- NUEVOS INDICADORES MEJORADOS ---
+    
+    # 1. Cumplimiento tradicional (solo entregados)
+    cumplimiento_tradicional = ((en_tiempo + en_tiempo_pd) / entregados * 100) if entregados > 0 else 0
+    
+    # 2. Cumplimiento de gestión (entregados + visitas en tiempo)
+    pedidos_gestionados = entregados + visita_en_tiempo
+    cumplimiento_gestion = (pedidos_gestionados / total_pedidos * 100) if total_pedidos > 0 else 0
+    
+    # 3. Efectividad de visitas
+    total_visitas = visita_en_tiempo + visita_fuera_tiempo
+    efectividad_visitas = (visita_en_tiempo / total_visitas * 100) if total_visitas > 0 else 0
+    
+    # 4. Tasa de resolución (entregados / total gestionado)
+    tasa_resolucion = (entregados / pedidos_gestionados * 100) if pedidos_gestionados > 0 else 0
+    
+    # Métricas principales en una sola línea
     col1, col2, col3, col4 = st.columns(4)
     with col1:
         st.metric("📦 Total Pedidos", total_pedidos)
     with col2:
-        st.metric("✅ Entregados", entregados)
+        st.metric("✅ Entregados", entregados, f"{(entregados/total_pedidos*100):.1f}%")
     with col3:
-        st.metric("🔄 Devueltos", devueltos)
+        st.metric("🔄 Devueltos", devueltos, f"{(devueltos/total_pedidos*100):.1f}%")
     with col4:
-        st.metric("⏳ Pendientes Reales", pendientes_reales)
+        st.metric("⏳ Pendientes", pendientes_reales, f"{(pendientes_reales/total_pedidos*100):.1f}%")
     
-    # Nueva métrica para el cumplimiento CORREGIDO (sin contar devueltos como pendientes)
-    if entregados > 0:
-        porcentaje_cumplimiento = ((en_tiempo + en_tiempo_pd) / entregados) * 100
-        st.metric("🎯 % Cumplimiento Entregados", f"{porcentaje_cumplimiento:.1f}%")
-    else:
-        st.metric("🎯 % Cumplimiento", "0%")
+    # Segunda línea de métricas
+    col5, col6, col7, col8 = st.columns(4)
+    with col5:
+        st.metric("🎯 Cumplimiento Tradicional", f"{cumplimiento_tradicional:.1f}%")
+    with col6:
+        st.metric("🚀 Cumplimiento Gestión", f"{cumplimiento_gestion:.1f}%")
+    with col7:
+        st.metric("📋 Visitas en Tiempo", visita_en_tiempo, f"{(visita_en_tiempo/total_pedidos*100):.1f}%")
+    with col8:
+        st.metric("📊 Efectividad Visitas", f"{efectividad_visitas:.1f}%")
     
-    # --- NUEVA TABLA DE RESUMEN CORREGIDA ---
-    st.header("📊 Resumen Corregido de Estados")
+    # --- TABLA DE RESUMEN MEJORADA ---
+    st.header("📈 Detalle de Estados")
     
     resumen_data = {
-        "Estado": [
-            "Total Pedidos",
-            "Entregados Correctamente", 
-            "Devueltos (Estado Cerrado)",
-            "Pendientes Reales",
-            "Entregados en Tiempo",
-            "Entregados Fuera de Tiempo",
-            "Pendientes en Tiempo",
-            "Pendientes Fuera de Tiempo"
+        "Categoría": [
+            "TOTAL PEDIDOS",
+            "ENTREGADOS",
+            " - En Tiempo",
+            " - En Tiempo (PD)",
+            " - Fuera de Tiempo", 
+            " - Fuera de Tiempo (PD)",
+            "DEVUELTOS",
+            "PENDIENTES CON VISITA",
+            " - Visita en Tiempo",
+            " - Visita Fuera de Tiempo",
+            "PENDIENTES SIN VISITA",
+            " - En Tiempo",
+            " - Último Día",
+            " - Fuera de Tiempo"
         ],
         "Cantidad": [
             total_pedidos,
             entregados,
-            devueltos,
-            pendientes_reales,
-            en_tiempo + en_tiempo_pd,
-            fuera_tiempo + fuera_tiempo_pd,
-            pendiente_en_tiempo + pendiente_ultimo_dia,
+            en_tiempo,
+            en_tiempo_pd,
+            fuera_tiempo,
+            fuera_tiempo_pd,
+            devuelto_count,
+            visita_en_tiempo + visita_fuera_tiempo,
+            visita_en_tiempo,
+            visita_fuera_tiempo,
+            pendiente_en_tiempo + pendiente_ultimo_dia + pendiente_fuera_tiempo,
+            pendiente_en_tiempo,
+            pendiente_ultimo_dia,
             pendiente_fuera_tiempo
         ],
-        "Porcentaje del Total": [
+        "Porcentaje": [
             "100%",
             f"{(entregados/total_pedidos*100):.1f}%",
-            f"{(devueltos/total_pedidos*100):.1f}%",
-            f"{(pendientes_reales/total_pedidos*100):.1f}%",
-            f"{((en_tiempo + en_tiempo_pd)/total_pedidos*100):.1f}%",
-            f"{((fuera_tiempo + fuera_tiempo_pd)/total_pedidos*100):.1f}%",
-            f"{((pendiente_en_tiempo + pendiente_ultimo_dia)/total_pedidos*100):.1f}%",
+            f"{(en_tiempo/total_pedidos*100):.1f}%",
+            f"{(en_tiempo_pd/total_pedidos*100):.1f}%",
+            f"{(fuera_tiempo/total_pedidos*100):.1f}%",
+            f"{(fuera_tiempo_pd/total_pedidos*100):.1f}%",
+            f"{(devuelto_count/total_pedidos*100):.1f}%",
+            f"{((visita_en_tiempo + visita_fuera_tiempo)/total_pedidos*100):.1f}%",
+            f"{(visita_en_tiempo/total_pedidos*100):.1f}%",
+            f"{(visita_fuera_tiempo/total_pedidos*100):.1f}%",
+            f"{((pendiente_en_tiempo + pendiente_ultimo_dia + pendiente_fuera_tiempo)/total_pedidos*100):.1f}%",
+            f"{(pendiente_en_tiempo/total_pedidos*100):.1f}%",
+            f"{(pendiente_ultimo_dia/total_pedidos*100):.1f}%",
             f"{(pendiente_fuera_tiempo/total_pedidos*100):.1f}%"
         ]
     }
@@ -532,40 +681,46 @@ if uploaded_file is not None:
     resumen_df = pd.DataFrame(resumen_data)
     st.dataframe(resumen_df, use_container_width=True)
     
-    # Gráfico de torta - Cumplimiento general (CON CATEGORÍA "DEVUELTO")
-    cumplimiento_labels = [
+    # --- GRÁFICO DE CUMPLIMIENTO MEJORADO ---
+    categorias_mejoradas = [
         "Entregada - En Tiempo", 
         "Entregada - En Tiempo (PD)",
         "Entregada - Fuera de Tiempo", 
         "Entregada - Fuera de Tiempo (PD)",
-        "Devuelto",  # NUEVA CATEGORÍA
+        "Devuelto",
+        "Pendiente - Visita en Tiempo",
+        "Pendiente - Visita Fuera de Tiempo",
         "Pendiente - En Tiempo", 
         "Pendiente - Último Día",
         "Pendiente - Fuera de Tiempo"
     ]
     
-    cumplimiento_values = [
+    valores_mejorados = [
         en_tiempo,
         en_tiempo_pd,
         fuera_tiempo,
         fuera_tiempo_pd,
-        devuelto_count,  # NUEVO VALOR
+        devuelto_count,
+        visita_en_tiempo,
+        visita_fuera_tiempo,
         pendiente_en_tiempo, 
         pendiente_ultimo_dia,
         pendiente_fuera_tiempo
     ]
     
     fig1 = px.pie(
-        names=cumplimiento_labels,
-        values=cumplimiento_values,
-        title="Distribución de Cumplimiento General (Incluyendo Devueltos)",
-        color=cumplimiento_labels,
+        names=categorias_mejoradas,
+        values=valores_mejorados,
+        title="Distribución de Cumplimiento Mejorado (Incluyendo Visitas)",
+        color=categorias_mejoradas,
         color_discrete_map={
             "Entregada - En Tiempo": "#28a745",
             "Entregada - En Tiempo (PD)": "#2ecc71",
             "Entregada - Fuera de Tiempo": "#dc3545",
             "Entregada - Fuera de Tiempo (PD)": "#e74c3c",
-            "Devuelto": "#9b59b6",  # COLOR NUEVO PARA DEVUELTOS
+            "Devuelto": "#9b59b6",
+            "Pendiente - Visita en Tiempo": "#3498db",
+            "Pendiente - Visita Fuera de Tiempo": "#e67e22",
             "Pendiente - En Tiempo": "#ffc107",
             "Pendiente - Último Día": "#fd7e14",
             "Pendiente - Fuera de Tiempo": "#6c757d"
@@ -575,85 +730,81 @@ if uploaded_file is not None:
     fig1.update_traces(textinfo='percent+value', textposition='inside')
     st.plotly_chart(fig1, use_container_width=True)
     
-    # Gráfico por Localidad (Top 10 con más fuera de tiempo) - EXCLUYENDO DEVUELTOS
-    fuera_tiempo_df = df[df['Cumplimiento'].str.contains("Fuera", na=False)]
-    if not fuera_tiempo_df.empty:
-        top_localidades = fuera_tiempo_df['Loc'].value_counts().head(10)
-        
-        fig2 = px.bar(
-            y=top_localidades.index,
-            x=top_localidades.values,
-            labels={'x': 'Pedidos Fuera de Tiempo', 'y': 'Localidad'},
-            title="Top 10 Localidades con Más Pedidos Fuera de Tiempo (Excluyendo Devueltos)",
-            color_discrete_sequence=["#dc3545"],
-            orientation='h'
-        )
-        fig2.update_traces(texttemplate='%{x}', textposition='outside')
-        st.plotly_chart(fig2, use_container_width=True)
-    else:
-        st.info("No hay pedidos fuera de tiempo para mostrar.")
+    # --- NUEVAS ALERTAS MEJORADAS EN LA INTERFAZ ---
     
-    # Gráfico por Producto (CON CATEGORÍA "DEVUELTO")
-    if 'Producto' in df.columns:
-        servicio_stats = df.groupby('Producto')['Cumplimiento'].value_counts().unstack(fill_value=0)
+    # Alertas de seguimiento de visitas
+    alertas_seguimiento = df[df['Alerta Seguimiento Visita'] != ""]
+    if not alertas_seguimiento.empty:
+        st.header("🔔 Alertas de Seguimiento de Visitas")
+        st.write("Pedidos con visita en tiempo que requieren acción:")
         
-        # Asegurar que todas las categorías estén presentes
-        for label in cumplimiento_labels:
-            if label not in servicio_stats.columns:
-                servicio_stats[label] = 0
+        columnas_alerta = ['Guia', 'Cliente', 'Destinatario', 'Loc', 'Estado', 'Visitas', 
+                          'Fecha último estado', 'Cumplimiento', 'Alerta Seguimiento Visita']
+        df_alerta = alertas_seguimiento[columnas_alerta]
         
-        # Reordenar columnas según el orden deseado
-        servicio_stats = servicio_stats[cumplimiento_labels]
+        st.dataframe(df_alerta)
         
-        # Calcular porcentajes por servicio
-        servicio_totales = servicio_stats.sum(axis=1)
-        servicio_porcentajes = servicio_stats.div(servicio_totales, axis=0) * 100
+        # Función auxiliar para generar Excel
+        def generar_excel_desde_df(df, nombre_hoja="Datos"):
+            output = io.BytesIO()
+            with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                df.to_excel(writer, sheet_name=nombre_hoja, index=False)
+            output.seek(0)
+            return output
         
-        # Crear texto para las barras (valor y porcentaje)
-        servicio_texto = servicio_stats.copy().astype(str)
-        for col in servicio_stats.columns:
-            servicio_texto[col] = servicio_stats[col].astype(str) + " (" + servicio_porcentajes[col].round(1).astype(str) + "%)"
-        
-        # Colores actualizados (incluyendo color para "Devuelto")
-        colores = ["#28a745", "#2ecc71", "#dc3545", "#e74c3c", "#9b59b6", "#ffc107", "#fd7e14", "#6c757d"]
-        
-        # Crear gráfico de barras horizontales apiladas
-        fig3 = go.Figure()
-        
-        for i, categoria in enumerate(cumplimiento_labels):
-            fig3.add_trace(go.Bar(
-                name=categoria,
-                y=servicio_stats.index,
-                x=servicio_stats[categoria],
-                text=servicio_texto[categoria],
-                textposition='auto',
-                marker_color=colores[i],
-                orientation='h'
-            ))
-        
-        fig3.update_layout(
-            title="Cumplimiento por Producto (Incluyendo Devueltos)",
-            barmode='stack',
-            yaxis_title="Producto",
-            xaxis_title="Cantidad de Pedidos",
-            height=600
+        excel_data = generar_excel_desde_df(df_alerta, "Alertas Seguimiento")
+        st.download_button(
+            label="📥 Descargar Alertas de Seguimiento (Excel)",
+            data=excel_data,
+            file_name="Alertas_Seguimiento_Visitas.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
-        
-        st.plotly_chart(fig3, use_container_width=True)
     
-    # --- FUNCION AUXILIAR PARA GENERAR EXCEL ---
-    def generar_excel_desde_df(df, nombre_hoja="Datos"):
-        output = io.BytesIO()
-        with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            df.to_excel(writer, sheet_name=nombre_hoja, index=False)
-        output.seek(0)
-        return output
-
-    # --- ALERTAS DE DEVOLUCIÓN ---
+    # Alertas de visitas múltiples
+    alertas_multiples = df[df['Alerta Visitas Múltiples'] != ""]
+    if not alertas_multiples.empty:
+        st.header("🔄 Alertas de Visitas Múltiples")
+        st.write("Pedidos con múltiples visitas sin éxito:")
+        
+        columnas_alerta = ['Guia', 'Cliente', 'Destinatario', 'Loc', 'Estado', 'Visitas', 
+                          'Fecha último estado', 'Alerta Visitas Múltiples']
+        df_alerta = alertas_multiples[columnas_alerta]
+        
+        st.dataframe(df_alerta)
+        
+        excel_data = generar_excel_desde_df(df_alerta, "Alertas Visitas Múltiples")
+        st.download_button(
+            label="📥 Descargar Alertas Visitas Múltiples (Excel)",
+            data=excel_data,
+            file_name="Alertas_Visitas_Multiples.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+    
+    # --- NUEVA ALERTA: UNA VISITA SIN SEGUIMIENTO ---
+    alertas_una_visita = df[df['Alerta Una Visita Sin Seguimiento'] != ""]
+    if not alertas_una_visita.empty:
+        st.header("⏰ Alertas de Una Visita Sin Seguimiento")
+        st.write("Pedidos con solo una visita que no han tenido seguimiento en 5+ días hábiles:")
+        
+        columnas_alerta = ['Guia', 'Cliente', 'Destinatario', 'Loc', 'Estado', 'Visitas', 
+                          'Fecha último estado', 'Cumplimiento', 'Alerta Una Visita Sin Seguimiento']
+        df_alerta = alertas_una_visita[columnas_alerta]
+        
+        st.dataframe(df_alerta)
+        
+        excel_data = generar_excel_desde_df(df_alerta, "Alertas Una Visita Sin Seguimiento")
+        st.download_button(
+            label="📥 Descargar Alertas Una Visita Sin Seguimiento (Excel)",
+            data=excel_data,
+            file_name="Alertas_Una_Visita_Sin_Seguimiento.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+    
+    # Alertas de devolución existentes
     alertas_devolucion = df[df['Alerta Devolución'] == "Sugerir devolución"]
     if not alertas_devolucion.empty:
         st.header("🚨 Alertas de Devolución")
-        st.write("Los siguientes pedidos están en estado 'Esperando retiro' por más de 15 días hábiles. Se sugiere devolución al remitente.")
+        st.write("Los siguientes pedidos están en estado 'Esperando retiro' por más de 15 días hábiles:")
         
         columnas_alerta = ['Guia', 'Cliente', 'Destinatario', 'Loc', 'Fecha último estado', 'Alerta Devolución']
         df_alerta = alertas_devolucion[columnas_alerta]
@@ -668,11 +819,11 @@ if uploaded_file is not None:
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
     
-    # --- ALERTAS DE REDESPACHO ---
+    # Alertas de redespacho
     alertas_redespacho = df[df['Alerta Redespacho'] == "Redespacho demorado"]
     if not alertas_redespacho.empty:
         st.header("🚨 Alertas de Redespacho Demorado")
-        st.write("Los siguientes pedidos están en estado 'Redespacho' por más de 48 horas hábiles.")
+        st.write("Los siguientes pedidos están en estado 'Redespacho' por más de 48 horas hábiles:")
         
         columnas_alerta = ['Guia', 'Cliente', 'Destinatario', 'Loc', 'Fecha último estado', 'Alerta Redespacho']
         df_alerta = alertas_redespacho[columnas_alerta]
@@ -687,11 +838,11 @@ if uploaded_file is not None:
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
     
-    # --- ALERTAS DE PENDIENTE FUERA DE TIEMPO ---
+    # Alertas de pendiente fuera de tiempo
     alertas_pendiente_fuera_tiempo = df[df['Alerta Pendiente Fuera Tiempo'] == "Fuera de tiempo crítico"]
     if not alertas_pendiente_fuera_tiempo.empty:
         st.header("🚨 Alertas de Pendiente Fuera de Tiempo")
-        st.write("Los siguientes pedidos están pendientes y fuera del tiempo de entrega prometido.")
+        st.write("Los siguientes pedidos están pendientes y fuera del tiempo de entrega prometido:")
         
         columnas_alerta = ['Guia', 'Cliente', 'Destinatario', 'Loc', 'Fecha último estado', 'Días Prometidos', 'Lead Time', 'Alerta Pendiente Fuera Tiempo']
         df_alerta = alertas_pendiente_fuera_tiempo[columnas_alerta]
@@ -706,11 +857,11 @@ if uploaded_file is not None:
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
 
-    # --- ALERTAS DE PAGO PENDIENTE ---
+    # Alertas de pago pendiente
     alertas_pago_pendiente = df[df['Alerta Pago Pendiente'] == "Pago pendiente demorado"]
     if not alertas_pago_pendiente.empty:
         st.header("🚨 Alertas de Pago Pendiente Demorado")
-        st.write("Los siguientes pedidos están en estado 'Esperando retiro' con condición de venta PD por más de 5 días hábiles. Se sugiere gestionar el cobro.")
+        st.write("Los siguientes pedidos están en estado 'Esperando retiro' con condición de venta PD por más de 5 días hábiles:")
         
         columnas_alerta = ['Guia', 'Cliente', 'Destinatario', 'Loc', 'Fecha último estado', 'Condición de venta', 'Alerta Pago Pendiente']
         df_alerta = alertas_pago_pendiente[columnas_alerta]
@@ -729,6 +880,9 @@ if uploaded_file is not None:
     st.header("📥 Descarga Combinada de Todas las Alertas")
 
     todas_alertas = df[
+        (df['Alerta Seguimiento Visita'] != "") |
+        (df['Alerta Visitas Múltiples'] != "") |
+        (df['Alerta Una Visita Sin Seguimiento'] != "") |
         (df['Alerta Devolución'] == "Sugerir devolución") |
         (df['Alerta Redespacho'] == "Redespacho demorado") |
         (df['Alerta Pendiente Fuera Tiempo'] == "Fuera de tiempo crítico") |
@@ -736,9 +890,14 @@ if uploaded_file is not None:
     ]
 
     if not todas_alertas.empty:
-        columnas_todas = ['Guia', 'Cliente', 'Destinatario', 'Loc', 'Estado', 'Fecha último estado', 
-                          'Alerta Devolución', 'Alerta Redespacho', 'Alerta Pendiente Fuera Tiempo', 'Alerta Pago Pendiente']
-        df_todas = todas_alertas[columnas_todas]
+        columnas_todas = ['Guia', 'Cliente', 'Destinatario', 'Loc', 'Estado', 'Visitas', 'Fecha último estado', 
+                          'Cumplimiento', 'Alerta Seguimiento Visita', 'Alerta Visitas Múltiples', 
+                          'Alerta Una Visita Sin Seguimiento', 'Alerta Devolución', 'Alerta Redespacho', 
+                          'Alerta Pendiente Fuera Tiempo', 'Alerta Pago Pendiente']
+        
+        # Filtrar columnas que existen en el DataFrame
+        columnas_existentes = [col for col in columnas_todas if col in df.columns]
+        df_todas = todas_alertas[columnas_existentes]
         
         st.dataframe(df_todas)
         
@@ -752,100 +911,46 @@ if uploaded_file is not None:
     else:
         st.info("✅ No hay alertas activas en este momento.")
 
-    # --- DESCARGAS ---
+    # --- DESCARGAS GENERALES ---
     st.header("📥 Descargas Generales")
     
     # Preparar Excel con gráficos
     output_excel = io.BytesIO()
 
-    # Crear datos para el gráfico de estadísticas (CON CATEGORÍA "DEVUELTO")
+    # Crear datos para el gráfico de estadísticas
     stats_data = {
         "Métrica": [
             "Total Pedidos", "Entregados", "Devueltos", "Pendientes Reales",
             "Entregada - En Tiempo", "Entregada - En Tiempo (PD)",
             "Entregada - Fuera de Tiempo", "Entregada - Fuera de Tiempo (PD)",
             "Devuelto",
+            "Pendiente - Visita en Tiempo", "Pendiente - Visita Fuera de Tiempo",
             "Pendiente - En Tiempo", "Pendiente - Último Día",
             "Pendiente - Fuera de Tiempo",
-            "% Cumplimiento (solo entregados)"
+            "% Cumplimiento Tradicional", "% Cumplimiento Gestión"
         ],
         "Valor": [
             total_pedidos, entregados, devueltos, pendientes_reales,
             en_tiempo, en_tiempo_pd,
             fuera_tiempo, fuera_tiempo_pd,
             devuelto_count,
+            visita_en_tiempo, visita_fuera_tiempo,
             pendiente_en_tiempo, pendiente_ultimo_dia,
             pendiente_fuera_tiempo,
-            f"{((en_tiempo + en_tiempo_pd)/entregados*100):.2f}%" if entregados > 0 else "0%"
+            f"{cumplimiento_tradicional:.2f}%", f"{cumplimiento_gestion:.2f}%"
         ]
     }
     
-    # Verificar que las longitudes coincidan antes de crear el DataFrame
     if len(stats_data["Métrica"]) == len(stats_data["Valor"]):
         stats_df = pd.DataFrame(stats_data)
     else:
         st.error("❌ Error: Las listas de estadísticas tienen longitudes diferentes")
-        # Crear un DataFrame de respaldo
         stats_df = pd.DataFrame({"Métrica": ["Error en estadísticas"], "Valor": ["Contactar al administrador"]})
     
     # Guardar en Excel
     with pd.ExcelWriter(output_excel, engine='openpyxl') as writer:
         df.to_excel(writer, sheet_name="Base", index=False)
-        
-        # Hoja de estadísticas
         stats_df.to_excel(writer, sheet_name="Estadísticas", index=False)
-        
-        # Obtener la hoja de trabajo
-        workbook = writer.book
-        worksheet = writer.sheets["Estadísticas"]
-        
-        # Crear datos para el gráfico de torta (CON CATEGORÍA "DEVUELTO")
-        pie_data = [
-            ["Categoría", "Cantidad"],
-            ["Entregada - En Tiempo", en_tiempo],
-            ["Entregada - En Tiempo (PD)", en_tiempo_pd],
-            ["Entregada - Fuera de Tiempo", fuera_tiempo],
-            ["Entregada - Fuera de Tiempo (PD)", fuera_tiempo_pd],
-            ["Devuelto", devuelto_count],
-            ["Pendiente - En Tiempo", pendiente_en_tiempo],
-            ["Pendiente - Último Día", pendiente_ultimo_dia],
-            ["Pendiente - Fuera de Tiempo", pendiente_fuera_tiempo]
-        ]
-        
-        # Escribir datos para el gráfico de torta
-        for i, row in enumerate(pie_data, start=15):
-            for j, value in enumerate(row, start=6):
-                worksheet.cell(row=i, column=j, value=value)
-        
-        # Crear gráfico de torta
-        pie_chart = PieChart()
-        pie_chart.title = "Distribución de Cumplimiento (Incluyendo Devueltos)"
-        
-        # Referencias a los datos
-        labels = Reference(worksheet, min_col=6, min_row=16, max_row=24)  # Ajustado a 24 (con devueltos)
-        data = Reference(worksheet, min_col=7, min_row=15, max_row=24)   # Ajustado a 24 (con devueltos)
-        
-        # Añadir datos al gráfico
-        pie_chart.add_data(data, titles_from_data=True)
-        pie_chart.set_categories(labels)
-        
-        # Estilo del gráfico
-        pie_chart.style = 10
-        
-        # Añadir etiquetas de datos
-        pie_chart.dataLabels = DataLabelList()
-        pie_chart.dataLabels.showPercent = True
-        pie_chart.dataLabels.showVal = True
-        pie_chart.dataLabels.showCatName = True
-        
-        # Colores personalizados (8 colores incluyendo devueltos)
-        colors = ['28a745', '2ecc71', 'dc3545', 'e74c3c', '9b59b6', 'ffc107', 'fd7e14', '6c757d']
-        for i, point in enumerate(pie_chart.series[0].data_points):
-            if i < len(colors):
-                point.graphicalProperties.solidFill = colors[i]
-        
-        # Añadir gráfico a la hoja
-        worksheet.add_chart(pie_chart, "D15")
 
     output_excel.seek(0)
     
@@ -859,7 +964,7 @@ if uploaded_file is not None:
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
     
-    # --- GENERAR POWERPOINT ---
+    # --- GENERAR POWERPOINT (SIMPLIFICADO) ---
     def crear_pptx():
         prs = Presentation()
         
@@ -869,7 +974,7 @@ if uploaded_file is not None:
         title = slide.shapes.title
         subtitle = slide.placeholders[1]
         title.text = "Reporte de Cumplimiento de Entregas"
-        subtitle.text = "Lead Time - PedidosYa\nGenerado automáticamente"
+        subtitle.text = "Lead Time - Indicadores Mejorados\nGenerado automáticamente"
         
         # Slide 2: Resumen Ejecutivo
         slide_layout = prs.slide_layouts[1]
@@ -890,132 +995,15 @@ if uploaded_file is not None:
             f"• Total de pedidos: {total_pedidos}",
             f"• Entregados: {entregados} ({(entregados/total_pedidos*100):.1f}%)",
             f"• Devueltos: {devueltos} ({(devueltos/total_pedidos*100):.1f}%)",
-            f"• Pendientes Reales: {pendientes_reales} ({(pendientes_reales/total_pedidos*100):.1f}%)",
-            f"• Entregada - En Tiempo: {en_tiempo}",
-            f"• Entregada - En Tiempo (PD): {en_tiempo_pd}",
-            f"• Entregada - Fuera de Tiempo: {fuera_tiempo}",
-            f"• Entregada - Fuera de Tiempo (PD): {fuera_tiempo_pd}",
-            f"• Pendiente - En Tiempo: {pendiente_en_tiempo}",
-            f"• Pendiente - Último Día: {pendiente_ultimo_dia}",
-            f"• Pendiente - Fuera de Tiempo: {pendiente_fuera_tiempo}"
+            f"• Cumplimiento Tradicional: {cumplimiento_tradicional:.1f}%",
+            f"• Cumplimiento Gestión: {cumplimiento_gestion:.1f}%",
+            f"• Visitas en Tiempo: {visita_en_tiempo}",
+            f"• Alertas Activas: {len(todas_alertas) if 'todas_alertas' in locals() else 0}"
         ]
-        
-        if entregados > 0:
-            cumplidos = en_tiempo + en_tiempo_pd
-            metrics.append(f"• % Cumplimiento (solo entregados): {(cumplidos/entregados*100):.2f}%")
         
         for metric in metrics:
             p = tf.add_paragraph()
             p.text = metric
-            p.font.size = Pt(16)
-            if "Entregada - En Tiempo" in metric and "(PD)" not in metric:
-                p.font.color.rgb = RGBColor(40, 167, 69)
-            elif "Entregada - En Tiempo (PD)" in metric:
-                p.font.color.rgb = RGBColor(46, 204, 113)
-            elif "Entregada - Fuera de Tiempo" in metric and "(PD)" not in metric:
-                p.font.color.rgb = RGBColor(220, 53, 69)
-            elif "Entregada - Fuera de Tiempo (PD)" in metric:
-                p.font.color.rgb = RGBColor(231, 76, 60)
-            elif "Devueltos" in metric:
-                p.font.color.rgb = RGBColor(155, 89, 182)
-            elif "Pendiente - En Tiempo" in metric:
-                p.font.color.rgb = RGBColor(255, 193, 7)
-            elif "Pendiente - Último Día" in metric:
-                p.font.color.rgb = RGBColor(253, 126, 20)
-            elif "Pendiente - Fuera de Tiempo" in metric:
-                p.font.color.rgb = RGBColor(108, 117, 125)
-        
-        # Slide 3: Gráfico de Cumplimiento
-        slide_layout = prs.slide_layouts[5]
-        slide = prs.slides.add_slide(slide_layout)
-        title = slide.shapes.title
-        title.text = "Distribución de Cumplimiento (Incluyendo Devueltos)"
-        
-        img_buffer = io.BytesIO()
-        fig1.write_image(img_buffer, format="png", width=800, height=500, engine="kaleido")
-        img_buffer.seek(0)
-        left = Inches(0.5)
-        top = Inches(1.5)
-        slide.shapes.add_picture(img_buffer, left, top, width=Inches(9))
-        
-        # Slide 4: Top Localidades (si existe)
-        if not fuera_tiempo_df.empty:
-            slide_layout = prs.slide_layouts[5]
-            slide = prs.slides.add_slide(slide_layout)
-            title = slide.shapes.title
-            title.text = "Top 10 Localidades con Más Fuera de Tiempo"
-            
-            img_buffer2 = io.BytesIO()
-            fig2.write_image(img_buffer2, format="png", width=800, height=500, engine="kaleido")
-            img_buffer2.seek(0)
-            left = Inches(0.5)
-            top = Inches(1.5)
-            slide.shapes.add_picture(img_buffer2, left, top, width=Inches(9))
-        
-        # Slide 5: Por Producto
-        if 'Producto' in df.columns:
-            slide_layout = prs.slide_layouts[5]
-            slide = prs.slides.add_slide(slide_layout)
-            title = slide.shapes.title
-            title.text = "Cumplimiento por Producto (Incluyendo Devueltos)"
-            
-            fig3_pptx = go.Figure()
-            
-            for i, categoria in enumerate(cumplimiento_labels):
-                fig3_pptx.add_trace(go.Bar(
-                    name=categoria,
-                    y=servicio_stats.index,
-                    x=servicio_stats[categoria],
-                    text=servicio_texto[categoria],
-                    textposition='auto',
-                    marker_color=colores[i],
-                    orientation='h',
-                    marker_line=dict(width=1, color='black')
-                ))
-            
-            fig3_pptx.update_layout(
-                title="Cumplimiento por Producto",
-                barmode='stack',
-                yaxis_title="Producto",
-                xaxis_title="Cantidad de Pedidos",
-                paper_bgcolor='white',
-                plot_bgcolor='white',
-                height=600
-            )
-            
-            img_buffer3 = io.BytesIO()
-            fig3_pptx.write_image(img_buffer3, format="png", width=800, height=600, engine="kaleido")
-            img_buffer3.seek(0)
-            left = Inches(0.5)
-            top = Inches(1.5)
-            slide.shapes.add_picture(img_buffer3, left, top, width=Inches(9), height=Inches(6))
-        
-        # Slide 6: Recomendaciones
-        slide_layout = prs.slide_layouts[1]
-        slide = prs.slides.add_slide(slide_layout)
-        title = slide.shapes.title
-        title.text = "Recomendaciones Estratégicas"
-        
-        content = slide.placeholders[1]
-        tf = content.text_frame
-        tf.clear()
-        
-        p = tf.paragraphs[0]
-        p.text = "Acciones Recomendadas:"
-        p.font.bold = True
-        p.font.size = Pt(20)
-        
-        recomendaciones = [
-            "• Monitorear localidades con alto índice de fuera de tiempo",
-            "• Optimizar rutas en zonas con mayor volumen de pendientes",
-            "• Coordinar con transportistas en áreas con bajo cumplimiento",
-            "• Implementar alertas proactivas para pedidos próximos a vencer",
-            "• Revisar procesos para reducir devoluciones"
-        ]
-        
-        for rec in recomendaciones:
-            p = tf.add_paragraph()
-            p.text = rec
             p.font.size = Pt(16)
         
         pptx_buffer = io.BytesIO()
@@ -1038,17 +1026,20 @@ if uploaded_file is not None:
 
     columnas_mostrar = [
         'Cliente', 'Subcuenta', 'Agencia origen', 'Agencia destino', 'Condición de venta',
-        'Fecha', 'Fecha último estado', 'Estado', 'ED', 'ZONA', 'Loc', 'Producto',
+        'Fecha', 'Fecha último estado', 'Estado', 'Visitas', 'ED', 'ZONA', 'Loc', 'Producto',
         'Lead Time', 'Días Prometidos', 'Día de Gracia Aplicado',
         'Cumplimiento', 'Días Restantes',
+        'Alerta Seguimiento Visita', 'Alerta Visitas Múltiples', 'Alerta Una Visita Sin Seguimiento',
         'Alerta Devolución', 'Alerta Redespacho', 'Alerta Pendiente Fuera Tiempo', 'Alerta Pago Pendiente'
     ]
 
-    df_vista_previa = df[columnas_mostrar].head(10)
+    # Mostrar solo las columnas que existen en el DataFrame
+    columnas_existentes = [col for col in columnas_mostrar if col in df.columns]
+    df_vista_previa = df[columnas_existentes].head(10)
     st.dataframe(df_vista_previa)
 
     # Botón para descargar vista previa completa en Excel
-    excel_vista = generar_excel_desde_df(df[columnas_mostrar], "Vista Previa Completa")
+    excel_vista = generar_excel_desde_df(df[columnas_existentes], "Vista Previa Completa")
     st.download_button(
         label="📥 Descargar Vista Previa Completa (Excel)",
         data=excel_vista,
