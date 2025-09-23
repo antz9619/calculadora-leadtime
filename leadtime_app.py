@@ -382,14 +382,6 @@ if uploaded_file is not None:
 
     df['Alerta Pago Pendiente'] = df.apply(alerta_pago_pendiente, axis=1)
     
-    # --- MOSTRAR INFORMACIÓN DE FECHAS EN SIDEBAR ---
-    fecha_actual_utc = datetime.now()
-    fecha_actual_arg = obtener_fecha_actual_argentina()
-    
-    st.sidebar.markdown("### 🕐 Información de Fechas")
-    st.sidebar.write(f"**UTC:** {fecha_actual_utc.strftime('%d/%m/%Y %H:%M')}")
-    st.sidebar.write(f"**Argentina:** {fecha_actual_arg.strftime('%d/%m/%Y %H:%M')}")
-    
     # --- FILTROS ---
     st.sidebar.header("🔍 Filtros")
 
