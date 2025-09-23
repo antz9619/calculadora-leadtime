@@ -262,11 +262,15 @@ if uploaded_file is not None:
         axis=1
     )
     
-    # --- CÁLCULO DE CUMPLIMIENTO (SIN "PENDIENTE - SIN DATOS") ---
+    # --- CÁLCULO DE CUMPLIMIENTO (CON CATEGORÍA "DEVUELTO") ---
     def determinar_cumplimiento(row):
         estado = str(row['Estado']).lower()
         ed = str(row.get('ED', '')).upper() if 'ED' in df.columns else 'SI'
         condicion_venta = str(row.get('Condición de venta', '')).upper() if 'Condición de venta' in df.columns else ''
+        
+        # PRIMERO: Verificar si es una devolución (estado cerrado)
+        if "devolución informada" in estado or "devolucion informada" in estado:
+            return "Devuelto"
         
         # Si ED es "NO" y estado es "esperando retiro"
         if ed == "NO" and "esperando retiro" in estado:
@@ -452,42 +456,89 @@ if uploaded_file is not None:
     if 'Condición de venta' in df.columns and condicion_venta_seleccionada != "Todas":
         df = df[df['Condición de venta'] == condicion_venta_seleccionada]
     
-    # --- ESTADÍSTICAS (SIN "PENDIENTE - SIN DATOS") ---
-    st.header("📈 Estadísticas")
+    # --- ESTADÍSTICAS CORREGIDAS (CON CATEGORÍA "DEVUELTO") ---
+    st.header("📈 Estadísticas Corregidas")
     
     total_pedidos = df.shape[0]
     entregados = df[df['Cumplimiento'].str.startswith("Entregada")].shape[0]
-    pendientes = total_pedidos - entregados
+    devueltos = df[df['Cumplimiento'] == "Devuelto"].shape[0]
+    # Los pendientes REALES son total - entregados - devueltos
+    pendientes_reales = total_pedidos - entregados - devueltos
     
-    # Clasificación detallada (SIN "Pendiente - Sin datos")
+    # Clasificación detallada (AHORA INCLUYENDO DEVUELTOS)
     en_tiempo = df[df['Cumplimiento'] == "Entregada - En Tiempo"].shape[0]
     en_tiempo_pd = df[df['Cumplimiento'] == "Entregada - En Tiempo (PD: Pago Pendiente)"].shape[0]
     fuera_tiempo = df[df['Cumplimiento'] == "Entregada - Fuera de Tiempo"].shape[0]
     fuera_tiempo_pd = df[df['Cumplimiento'] == "Entregada - Fuera de Tiempo (PD: Pago Pendiente)"].shape[0]
+    devuelto_count = devueltos  # Nueva categoría
     pendiente_en_tiempo = df[df['Cumplimiento'] == "Pendiente - En Tiempo"].shape[0]
     pendiente_fuera_tiempo = df[df['Cumplimiento'] == "Pendiente - Fuera de Tiempo"].shape[0]
     pendiente_ultimo_dia = df[df['Cumplimiento'] == "Pendiente - Último Día"].shape[0]
     
+    # Métricas principales
     col1, col2, col3, col4 = st.columns(4)
     with col1:
         st.metric("📦 Total Pedidos", total_pedidos)
     with col2:
         st.metric("✅ Entregados", entregados)
     with col3:
-        st.metric("⏳ Pendientes", pendientes)
+        st.metric("🔄 Devueltos", devueltos)
     with col4:
-        if entregados > 0:
-            porcentaje = ((en_tiempo + en_tiempo_pd) / entregados) * 100
-            st.metric("🎯 % Cumplimiento Entregados", f"{porcentaje:.1f}%")
-        else:
-            st.metric("🎯 % Cumplimiento", "0%")
+        st.metric("⏳ Pendientes Reales", pendientes_reales)
     
-    # Gráfico de torta - Cumplimiento general (SIN "Pendiente - Sin datos")
+    # Nueva métrica para el cumplimiento CORREGIDO (sin contar devueltos como pendientes)
+    if entregados > 0:
+        porcentaje_cumplimiento = ((en_tiempo + en_tiempo_pd) / entregados) * 100
+        st.metric("🎯 % Cumplimiento Entregados", f"{porcentaje_cumplimiento:.1f}%")
+    else:
+        st.metric("🎯 % Cumplimiento", "0%")
+    
+    # --- NUEVA TABLA DE RESUMEN CORREGIDA ---
+    st.header("📊 Resumen Corregido de Estados")
+    
+    resumen_data = {
+        "Estado": [
+            "Total Pedidos",
+            "Entregados Correctamente", 
+            "Devueltos (Estado Cerrado)",
+            "Pendientes Reales",
+            "Entregados en Tiempo",
+            "Entregados Fuera de Tiempo",
+            "Pendientes en Tiempo",
+            "Pendientes Fuera de Tiempo"
+        ],
+        "Cantidad": [
+            total_pedidos,
+            entregados,
+            devueltos,
+            pendientes_reales,
+            en_tiempo + en_tiempo_pd,
+            fuera_tiempo + fuera_tiempo_pd,
+            pendiente_en_tiempo + pendiente_ultimo_dia,
+            pendiente_fuera_tiempo
+        ],
+        "Porcentaje del Total": [
+            "100%",
+            f"{(entregados/total_pedidos*100):.1f}%",
+            f"{(devueltos/total_pedidos*100):.1f}%",
+            f"{(pendientes_reales/total_pedidos*100):.1f}%",
+            f"{((en_tiempo + en_tiempo_pd)/total_pedidos*100):.1f}%",
+            f"{((fuera_tiempo + fuera_tiempo_pd)/total_pedidos*100):.1f}%",
+            f"{((pendiente_en_tiempo + pendiente_ultimo_dia)/total_pedidos*100):.1f}%",
+            f"{(pendiente_fuera_tiempo/total_pedidos*100):.1f}%"
+        ]
+    }
+    
+    resumen_df = pd.DataFrame(resumen_data)
+    st.dataframe(resumen_df, use_container_width=True)
+    
+    # Gráfico de torta - Cumplimiento general (CON CATEGORÍA "DEVUELTO")
     cumplimiento_labels = [
         "Entregada - En Tiempo", 
         "Entregada - En Tiempo (PD)",
         "Entregada - Fuera de Tiempo", 
         "Entregada - Fuera de Tiempo (PD)",
+        "Devuelto",  # NUEVA CATEGORÍA
         "Pendiente - En Tiempo", 
         "Pendiente - Último Día",
         "Pendiente - Fuera de Tiempo"
@@ -498,24 +549,23 @@ if uploaded_file is not None:
         en_tiempo_pd,
         fuera_tiempo,
         fuera_tiempo_pd,
+        devuelto_count,  # NUEVO VALOR
         pendiente_en_tiempo, 
         pendiente_ultimo_dia,
         pendiente_fuera_tiempo
     ]
     
-    # Colores en orden correcto (sin el último color para "Sin datos")
-    colores = ["#28a745", "#2ecc71", "#dc3545", "#e74c3c", "#ffc107", "#fd7e14", "#6c757d"]
-    
     fig1 = px.pie(
         names=cumplimiento_labels,
         values=cumplimiento_values,
-        title="Distribución de Cumplimiento General",
+        title="Distribución de Cumplimiento General (Incluyendo Devueltos)",
         color=cumplimiento_labels,
         color_discrete_map={
             "Entregada - En Tiempo": "#28a745",
             "Entregada - En Tiempo (PD)": "#2ecc71",
             "Entregada - Fuera de Tiempo": "#dc3545",
             "Entregada - Fuera de Tiempo (PD)": "#e74c3c",
+            "Devuelto": "#9b59b6",  # COLOR NUEVO PARA DEVUELTOS
             "Pendiente - En Tiempo": "#ffc107",
             "Pendiente - Último Día": "#fd7e14",
             "Pendiente - Fuera de Tiempo": "#6c757d"
@@ -525,7 +575,7 @@ if uploaded_file is not None:
     fig1.update_traces(textinfo='percent+value', textposition='inside')
     st.plotly_chart(fig1, use_container_width=True)
     
-    # Gráfico por Localidad (Top 10 con más fuera de tiempo)
+    # Gráfico por Localidad (Top 10 con más fuera de tiempo) - EXCLUYENDO DEVUELTOS
     fuera_tiempo_df = df[df['Cumplimiento'].str.contains("Fuera", na=False)]
     if not fuera_tiempo_df.empty:
         top_localidades = fuera_tiempo_df['Loc'].value_counts().head(10)
@@ -534,7 +584,7 @@ if uploaded_file is not None:
             y=top_localidades.index,
             x=top_localidades.values,
             labels={'x': 'Pedidos Fuera de Tiempo', 'y': 'Localidad'},
-            title="Top 10 Localidades con Más Pedidos Fuera de Tiempo",
+            title="Top 10 Localidades con Más Pedidos Fuera de Tiempo (Excluyendo Devueltos)",
             color_discrete_sequence=["#dc3545"],
             orientation='h'
         )
@@ -543,7 +593,7 @@ if uploaded_file is not None:
     else:
         st.info("No hay pedidos fuera de tiempo para mostrar.")
     
-    # Gráfico por Producto
+    # Gráfico por Producto (CON CATEGORÍA "DEVUELTO")
     if 'Producto' in df.columns:
         servicio_stats = df.groupby('Producto')['Cumplimiento'].value_counts().unstack(fill_value=0)
         
@@ -564,6 +614,9 @@ if uploaded_file is not None:
         for col in servicio_stats.columns:
             servicio_texto[col] = servicio_stats[col].astype(str) + " (" + servicio_porcentajes[col].round(1).astype(str) + "%)"
         
+        # Colores actualizados (incluyendo color para "Devuelto")
+        colores = ["#28a745", "#2ecc71", "#dc3545", "#e74c3c", "#9b59b6", "#ffc107", "#fd7e14", "#6c757d"]
+        
         # Crear gráfico de barras horizontales apiladas
         fig3 = go.Figure()
         
@@ -579,7 +632,7 @@ if uploaded_file is not None:
             ))
         
         fig3.update_layout(
-            title="Cumplimiento por Producto",
+            title="Cumplimiento por Producto (Incluyendo Devueltos)",
             barmode='stack',
             yaxis_title="Producto",
             xaxis_title="Cantidad de Pedidos",
@@ -705,20 +758,22 @@ if uploaded_file is not None:
     # Preparar Excel con gráficos
     output_excel = io.BytesIO()
 
-    # Crear datos para el gráfico de estadísticas (SIN "Pendiente - Sin datos")
+    # Crear datos para el gráfico de estadísticas (CON CATEGORÍA "DEVUELTO")
     stats_data = {
         "Métrica": [
-            "Total Pedidos", "Entregados", "Pendientes",
+            "Total Pedidos", "Entregados", "Devueltos", "Pendientes Reales",
             "Entregada - En Tiempo", "Entregada - En Tiempo (PD)",
             "Entregada - Fuera de Tiempo", "Entregada - Fuera de Tiempo (PD)",
+            "Devuelto",
             "Pendiente - En Tiempo", "Pendiente - Último Día",
             "Pendiente - Fuera de Tiempo",
             "% Cumplimiento (solo entregados)"
         ],
         "Valor": [
-            total_pedidos, entregados, pendientes,
+            total_pedidos, entregados, devueltos, pendientes_reales,
             en_tiempo, en_tiempo_pd,
             fuera_tiempo, fuera_tiempo_pd,
+            devuelto_count,
             pendiente_en_tiempo, pendiente_ultimo_dia,
             pendiente_fuera_tiempo,
             f"{((en_tiempo + en_tiempo_pd)/entregados*100):.2f}%" if entregados > 0 else "0%"
@@ -744,13 +799,14 @@ if uploaded_file is not None:
         workbook = writer.book
         worksheet = writer.sheets["Estadísticas"]
         
-        # Crear datos para el gráfico de torta (SIN "Pendiente - Sin datos")
+        # Crear datos para el gráfico de torta (CON CATEGORÍA "DEVUELTO")
         pie_data = [
             ["Categoría", "Cantidad"],
             ["Entregada - En Tiempo", en_tiempo],
             ["Entregada - En Tiempo (PD)", en_tiempo_pd],
             ["Entregada - Fuera de Tiempo", fuera_tiempo],
             ["Entregada - Fuera de Tiempo (PD)", fuera_tiempo_pd],
+            ["Devuelto", devuelto_count],
             ["Pendiente - En Tiempo", pendiente_en_tiempo],
             ["Pendiente - Último Día", pendiente_ultimo_dia],
             ["Pendiente - Fuera de Tiempo", pendiente_fuera_tiempo]
@@ -763,11 +819,11 @@ if uploaded_file is not None:
         
         # Crear gráfico de torta
         pie_chart = PieChart()
-        pie_chart.title = "Distribución de Cumplimiento"
+        pie_chart.title = "Distribución de Cumplimiento (Incluyendo Devueltos)"
         
         # Referencias a los datos
-        labels = Reference(worksheet, min_col=6, min_row=16, max_row=23)  # Ajustado a 23 (sin la última fila)
-        data = Reference(worksheet, min_col=7, min_row=15, max_row=23)   # Ajustado a 23 (sin la última fila)
+        labels = Reference(worksheet, min_col=6, min_row=16, max_row=24)  # Ajustado a 24 (con devueltos)
+        data = Reference(worksheet, min_col=7, min_row=15, max_row=24)   # Ajustado a 24 (con devueltos)
         
         # Añadir datos al gráfico
         pie_chart.add_data(data, titles_from_data=True)
@@ -782,8 +838,8 @@ if uploaded_file is not None:
         pie_chart.dataLabels.showVal = True
         pie_chart.dataLabels.showCatName = True
         
-        # Colores personalizados (7 colores en lugar de 8)
-        colors = ['28a745', '2ecc71', 'dc3545', 'e74c3c', 'ffc107', 'fd7e14', '6c757d']
+        # Colores personalizados (8 colores incluyendo devueltos)
+        colors = ['28a745', '2ecc71', 'dc3545', 'e74c3c', '9b59b6', 'ffc107', 'fd7e14', '6c757d']
         for i, point in enumerate(pie_chart.series[0].data_points):
             if i < len(colors):
                 point.graphicalProperties.solidFill = colors[i]
@@ -833,7 +889,8 @@ if uploaded_file is not None:
         metrics = [
             f"• Total de pedidos: {total_pedidos}",
             f"• Entregados: {entregados} ({(entregados/total_pedidos*100):.1f}%)",
-            f"• Pendientes: {pendientes} ({(pendientes/total_pedidos*100):.1f}%)",
+            f"• Devueltos: {devueltos} ({(devueltos/total_pedidos*100):.1f}%)",
+            f"• Pendientes Reales: {pendientes_reales} ({(pendientes_reales/total_pedidos*100):.1f}%)",
             f"• Entregada - En Tiempo: {en_tiempo}",
             f"• Entregada - En Tiempo (PD): {en_tiempo_pd}",
             f"• Entregada - Fuera de Tiempo: {fuera_tiempo}",
@@ -859,6 +916,8 @@ if uploaded_file is not None:
                 p.font.color.rgb = RGBColor(220, 53, 69)
             elif "Entregada - Fuera de Tiempo (PD)" in metric:
                 p.font.color.rgb = RGBColor(231, 76, 60)
+            elif "Devueltos" in metric:
+                p.font.color.rgb = RGBColor(155, 89, 182)
             elif "Pendiente - En Tiempo" in metric:
                 p.font.color.rgb = RGBColor(255, 193, 7)
             elif "Pendiente - Último Día" in metric:
@@ -870,7 +929,7 @@ if uploaded_file is not None:
         slide_layout = prs.slide_layouts[5]
         slide = prs.slides.add_slide(slide_layout)
         title = slide.shapes.title
-        title.text = "Distribución de Cumplimiento"
+        title.text = "Distribución de Cumplimiento (Incluyendo Devueltos)"
         
         img_buffer = io.BytesIO()
         fig1.write_image(img_buffer, format="png", width=800, height=500, engine="kaleido")
@@ -898,7 +957,7 @@ if uploaded_file is not None:
             slide_layout = prs.slide_layouts[5]
             slide = prs.slides.add_slide(slide_layout)
             title = slide.shapes.title
-            title.text = "Cumplimiento por Producto"
+            title.text = "Cumplimiento por Producto (Incluyendo Devueltos)"
             
             fig3_pptx = go.Figure()
             
@@ -950,7 +1009,8 @@ if uploaded_file is not None:
             "• Monitorear localidades con alto índice de fuera de tiempo",
             "• Optimizar rutas en zonas con mayor volumen de pendientes",
             "• Coordinar con transportistas en áreas con bajo cumplimiento",
-            "• Implementar alertas proactivas para pedidos próximos a vencer"
+            "• Implementar alertas proactivas para pedidos próximos a vencer",
+            "• Revisar procesos para reducir devoluciones"
         ]
         
         for rec in recomendaciones:
