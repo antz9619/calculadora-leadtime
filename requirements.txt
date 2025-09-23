@@ -6,3 +6,4 @@ openpyxl
 kaleido
 numpy
 matplotlib
+pytz
