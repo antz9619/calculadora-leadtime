@@ -187,7 +187,7 @@ def determinar_zona(localidad_destino):
 # --- INTERFAZ STREAMLIT ---
 st.set_page_config(page_title="Calculadora de Lead Time", layout="wide")
 
-st.title("📊 Calculadora de Lead Time - Indicadores Mejorados")
+st.title("📊 Calculadora de Lead Time + Indicadores")
 st.markdown("Sube tu reporte diario y obtén estadísticas + PPT listo para presentar.")
 
 uploaded_file = st.file_uploader("📂 Sube tu archivo Excel", type=["xlsx", "xls"])
@@ -565,7 +565,7 @@ if uploaded_file is not None:
         df = df[df['Condición de venta'] == condicion_venta_seleccionada]
     
     # --- ESTADÍSTICAS MEJORADAS ---
-    st.header("📊 Indicadores de Cumplimiento Mejorados")
+    st.header("📊 Indicadores de Cumplimiento")
     
     total_pedidos = df.shape[0]
     entregados = df[df['Cumplimiento'].str.startswith("Entregada")].shape[0]
@@ -602,6 +602,10 @@ if uploaded_file is not None:
     # 4. Tasa de resolución (entregados / total gestionado)
     tasa_resolucion = (entregados / pedidos_gestionados * 100) if pedidos_gestionados > 0 else 0
     
+    # --- NUEVO INDICADOR: CUMPLIMIENTO REAL ---
+    # Este es el indicador principal que combina entregas + visitas en tiempo
+    cumplimiento_real = ((en_tiempo + en_tiempo_pd + visita_en_tiempo) / total_pedidos * 100) if total_pedidos > 0 else 0
+    
     # Métricas principales en una sola línea
     col1, col2, col3, col4 = st.columns(4)
     with col1:
@@ -613,16 +617,41 @@ if uploaded_file is not None:
     with col4:
         st.metric("⏳ Pendientes", pendientes_reales, f"{(pendientes_reales/total_pedidos*100):.1f}%")
     
-    # Segunda línea de métricas
+    # Segunda línea de métricas - CON EL NUEVO INDICADOR PRINCIPAL
     col5, col6, col7, col8 = st.columns(4)
     with col5:
         st.metric("🎯 Cumplimiento Tradicional", f"{cumplimiento_tradicional:.1f}%")
     with col6:
-        st.metric("🚀 Cumplimiento Gestión", f"{cumplimiento_gestion:.1f}%")
+        # Este es el indicador principal que buscabas
+        st.metric("🚀 CUMPLIMIENTO REAL", f"{cumplimiento_real:.1f}%", 
+                 delta=f"{(cumplimiento_real - cumplimiento_tradicional):.1f}% vs Tradicional",
+                 delta_color="normal")
     with col7:
         st.metric("📋 Visitas en Tiempo", visita_en_tiempo, f"{(visita_en_tiempo/total_pedidos*100):.1f}%")
     with col8:
         st.metric("📊 Efectividad Visitas", f"{efectividad_visitas:.1f}%")
+    
+    # Tercera línea con indicadores adicionales
+    col9, col10, col11, col12 = st.columns(4)
+    with col9:
+        st.metric("📈 Cumplimiento Gestión", f"{cumplimiento_gestion:.1f}%")
+    with col10:
+        st.metric("💡 Tasa Resolución", f"{tasa_resolucion:.1f}%")
+    with col11:
+        st.metric("📍 Visitas Fuera Tiempo", visita_fuera_tiempo)
+    with col12:
+        st.metric("⚠️ Pendientes Críticos", pendiente_fuera_tiempo)
+    
+    # --- EXPLICACIÓN DEL CUMPLIMIENTO REAL ---
+    st.info(f"""
+    **📊 Explicación del Cumplimiento Real ({cumplimiento_real:.1f}%):**
+    
+    Este indicador combina:
+    - **Entregas en tiempo**: {en_tiempo + en_tiempo_pd} pedidos ({(en_tiempo + en_tiempo_pd)/total_pedidos*100:.1f}%)
+    - **Visitas en tiempo**: {visita_en_tiempo} pedidos ({(visita_en_tiempo)/total_pedidos*100:.1f}%)
+    
+    **Fórmula**: (Entregas en tiempo + Visitas en tiempo) / Total pedidos × 100
+    """)
     
     # --- TABLA DE RESUMEN MEJORADA ---
     st.header("📈 Detalle de Estados")
@@ -729,6 +758,38 @@ if uploaded_file is not None:
     )
     fig1.update_traces(textinfo='percent+value', textposition='inside')
     st.plotly_chart(fig1, use_container_width=True)
+    
+    # --- GRÁFICO COMPARATIVO DE INDICADORES ---
+    st.header("📈 Comparativa de Indicadores de Cumplimiento")
+    
+    indicadores_comparativa = {
+        "Indicador": ["Cumplimiento Tradicional", "Cumplimiento Real", "Cumplimiento Gestión"],
+        "Porcentaje": [cumplimiento_tradicional, cumplimiento_real, cumplimiento_gestion],
+        "Descripción": [
+            "Solo entregas en tiempo",
+            "Entregas + Visitas en tiempo", 
+            "Gestión total (excluye devoluciones)"
+        ]
+    }
+    
+    df_comparativa = pd.DataFrame(indicadores_comparativa)
+    
+    fig2 = px.bar(
+        df_comparativa,
+        x="Indicador",
+        y="Porcentaje",
+        color="Indicador",
+        text="Porcentaje",
+        title="Comparativa de Diferentes Indicadores de Cumplimiento",
+        color_discrete_map={
+            "Cumplimiento Tradicional": "#ffc107",
+            "Cumplimiento Real": "#28a745",
+            "Cumplimiento Gestión": "#007bff"
+        }
+    )
+    fig2.update_traces(texttemplate='%{y:.1f}%', textposition='outside')
+    fig2.update_layout(showlegend=False)
+    st.plotly_chart(fig2, use_container_width=True)
     
     # --- NUEVAS ALERTAS MEJORADAS EN LA INTERFAZ ---
     
@@ -927,7 +988,7 @@ if uploaded_file is not None:
             "Pendiente - Visita en Tiempo", "Pendiente - Visita Fuera de Tiempo",
             "Pendiente - En Tiempo", "Pendiente - Último Día",
             "Pendiente - Fuera de Tiempo",
-            "% Cumplimiento Tradicional", "% Cumplimiento Gestión"
+            "% Cumplimiento Tradicional", "% Cumplimiento Real", "% Cumplimiento Gestión"
         ],
         "Valor": [
             total_pedidos, entregados, devueltos, pendientes_reales,
@@ -937,7 +998,7 @@ if uploaded_file is not None:
             visita_en_tiempo, visita_fuera_tiempo,
             pendiente_en_tiempo, pendiente_ultimo_dia,
             pendiente_fuera_tiempo,
-            f"{cumplimiento_tradicional:.2f}%", f"{cumplimiento_gestion:.2f}%"
+            f"{cumplimiento_tradicional:.2f}%", f"{cumplimiento_real:.2f}%", f"{cumplimiento_gestion:.2f}%"
         ]
     }
     
@@ -996,6 +1057,7 @@ if uploaded_file is not None:
             f"• Entregados: {entregados} ({(entregados/total_pedidos*100):.1f}%)",
             f"• Devueltos: {devueltos} ({(devueltos/total_pedidos*100):.1f}%)",
             f"• Cumplimiento Tradicional: {cumplimiento_tradicional:.1f}%",
+            f"• Cumplimiento Real: {cumplimiento_real:.1f}%",
             f"• Cumplimiento Gestión: {cumplimiento_gestion:.1f}%",
             f"• Visitas en Tiempo: {visita_en_tiempo}",
             f"• Alertas Activas: {len(todas_alertas) if 'todas_alertas' in locals() else 0}"
