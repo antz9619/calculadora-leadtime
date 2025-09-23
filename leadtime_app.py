@@ -28,6 +28,14 @@ def obtener_fecha_actual_argentina():
     """Obtiene la fecha actual en la zona horaria de Argentina"""
     return datetime.now(ZONA_HORARIA_ARGENTINA)
 
+# --- FUNCIÓN PARA GENERAR EXCEL (MOVIDA AL INICIO) ---
+def generar_excel_desde_df(df, nombre_hoja="Datos"):
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        df.to_excel(writer, sheet_name=nombre_hoja, index=False)
+    output.seek(0)
+    return output
+
 # --- FERIADOS 2025 ---
 feriados_2025 = [
     "2025-01-01", "2025-03-03", "2025-03-24", "2025-04-02",
@@ -187,7 +195,7 @@ def determinar_zona(localidad_destino):
 # --- INTERFAZ STREAMLIT ---
 st.set_page_config(page_title="Calculadora de Lead Time", layout="wide")
 
-st.title("📊 Calculadora de Lead Time + Indicadores")
+st.title("📊 Calculadora de Lead Time - Indicadores Mejorados")
 st.markdown("Sube tu reporte diario y obtén estadísticas + PPT listo para presentar.")
 
 uploaded_file = st.file_uploader("📂 Sube tu archivo Excel", type=["xlsx", "xls"])
@@ -565,7 +573,7 @@ if uploaded_file is not None:
         df = df[df['Condición de venta'] == condicion_venta_seleccionada]
     
     # --- ESTADÍSTICAS MEJORADAS ---
-    st.header("📊 Indicadores de Cumplimiento")
+    st.header("📊 Indicadores de Cumplimiento Mejorados")
     
     total_pedidos = df.shape[0]
     entregados = df[df['Cumplimiento'].str.startswith("Entregada")].shape[0]
@@ -801,17 +809,11 @@ if uploaded_file is not None:
         
         columnas_alerta = ['Guia', 'Cliente', 'Destinatario', 'Loc', 'Estado', 'Visitas', 
                           'Fecha último estado', 'Cumplimiento', 'Alerta Seguimiento Visita']
-        df_alerta = alertas_seguimiento[columnas_alerta]
+        # Filtrar columnas existentes
+        columnas_existentes = [col for col in columnas_alerta if col in df.columns]
+        df_alerta = alertas_seguimiento[columnas_existentes]
         
         st.dataframe(df_alerta)
-        
-        # Función auxiliar para generar Excel
-        def generar_excel_desde_df(df, nombre_hoja="Datos"):
-            output = io.BytesIO()
-            with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                df.to_excel(writer, sheet_name=nombre_hoja, index=False)
-            output.seek(0)
-            return output
         
         excel_data = generar_excel_desde_df(df_alerta, "Alertas Seguimiento")
         st.download_button(
@@ -829,7 +831,8 @@ if uploaded_file is not None:
         
         columnas_alerta = ['Guia', 'Cliente', 'Destinatario', 'Loc', 'Estado', 'Visitas', 
                           'Fecha último estado', 'Alerta Visitas Múltiples']
-        df_alerta = alertas_multiples[columnas_alerta]
+        columnas_existentes = [col for col in columnas_alerta if col in df.columns]
+        df_alerta = alertas_multiples[columnas_existentes]
         
         st.dataframe(df_alerta)
         
@@ -849,7 +852,8 @@ if uploaded_file is not None:
         
         columnas_alerta = ['Guia', 'Cliente', 'Destinatario', 'Loc', 'Estado', 'Visitas', 
                           'Fecha último estado', 'Cumplimiento', 'Alerta Una Visita Sin Seguimiento']
-        df_alerta = alertas_una_visita[columnas_alerta]
+        columnas_existentes = [col for col in columnas_alerta if col in df.columns]
+        df_alerta = alertas_una_visita[columnas_existentes]
         
         st.dataframe(df_alerta)
         
@@ -868,7 +872,8 @@ if uploaded_file is not None:
         st.write("Los siguientes pedidos están en estado 'Esperando retiro' por más de 15 días hábiles:")
         
         columnas_alerta = ['Guia', 'Cliente', 'Destinatario', 'Loc', 'Fecha último estado', 'Alerta Devolución']
-        df_alerta = alertas_devolucion[columnas_alerta]
+        columnas_existentes = [col for col in columnas_alerta if col in df.columns]
+        df_alerta = alertas_devolucion[columnas_existentes]
         
         st.dataframe(df_alerta)
         
@@ -887,7 +892,8 @@ if uploaded_file is not None:
         st.write("Los siguientes pedidos están en estado 'Redespacho' por más de 48 horas hábiles:")
         
         columnas_alerta = ['Guia', 'Cliente', 'Destinatario', 'Loc', 'Fecha último estado', 'Alerta Redespacho']
-        df_alerta = alertas_redespacho[columnas_alerta]
+        columnas_existentes = [col for col in columnas_alerta if col in df.columns]
+        df_alerta = alertas_redespacho[columnas_existentes]
         
         st.dataframe(df_alerta)
         
@@ -906,7 +912,8 @@ if uploaded_file is not None:
         st.write("Los siguientes pedidos están pendientes y fuera del tiempo de entrega prometido:")
         
         columnas_alerta = ['Guia', 'Cliente', 'Destinatario', 'Loc', 'Fecha último estado', 'Días Prometidos', 'Lead Time', 'Alerta Pendiente Fuera Tiempo']
-        df_alerta = alertas_pendiente_fuera_tiempo[columnas_alerta]
+        columnas_existentes = [col for col in columnas_alerta if col in df.columns]
+        df_alerta = alertas_pendiente_fuera_tiempo[columnas_existentes]
         
         st.dataframe(df_alerta)
         
@@ -925,7 +932,8 @@ if uploaded_file is not None:
         st.write("Los siguientes pedidos están en estado 'Esperando retiro' con condición de venta PD por más de 5 días hábiles:")
         
         columnas_alerta = ['Guia', 'Cliente', 'Destinatario', 'Loc', 'Fecha último estado', 'Condición de venta', 'Alerta Pago Pendiente']
-        df_alerta = alertas_pago_pendiente[columnas_alerta]
+        columnas_existentes = [col for col in columnas_alerta if col in df.columns]
+        df_alerta = alertas_pago_pendiente[columnas_existentes]
         
         st.dataframe(df_alerta)
         
