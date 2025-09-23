@@ -195,7 +195,7 @@ def determinar_zona(localidad_destino):
 # --- INTERFAZ STREAMLIT ---
 st.set_page_config(page_title="Calculadora de Lead Time", layout="wide")
 
-st.title("📊 Calculadora de Lead Time - Indicadores Mejorados")
+st.title("📊 Calculadora de Lead Time + Indicadores")
 st.markdown("Sube tu reporte diario y obtén estadísticas + PPT listo para presentar.")
 
 uploaded_file = st.file_uploader("📂 Sube tu archivo Excel", type=["xlsx", "xls"])
@@ -573,7 +573,7 @@ if uploaded_file is not None:
         df = df[df['Condición de venta'] == condicion_venta_seleccionada]
     
     # --- ESTADÍSTICAS MEJORADAS ---
-    st.header("📊 Indicadores de Cumplimiento Mejorados")
+    st.header("📊 Indicadores de Cumplimiento")
     
     total_pedidos = df.shape[0]
     entregados = df[df['Cumplimiento'].str.startswith("Entregada")].shape[0]
