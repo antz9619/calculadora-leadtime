@@ -44,6 +44,27 @@ feriados_2025 = [
 ]
 feriados_set = set(pd.to_datetime(feriados_2025).date)
 
+# --- DICCIONARIO DE SEMANAS REALES (CALENDARIO) ---
+def obtener_semana_calendario(fecha):
+    """
+    Calcula la semana del año según calendario (lunes a domingo)
+    usando el estándar ISO 8601
+    """
+    if pd.isna(fecha):
+        return None
+    try:
+        # Asegurarse de que es datetime
+        if isinstance(fecha, str):
+            fecha = pd.to_datetime(fecha, errors='coerce')
+        # Calcular semana ISO (lunes como primer día de la semana)
+        semana = fecha.isocalendar()[1]
+        return semana
+    except:
+        return None
+
+# Aplicar la función para crear la columna de semana calendario
+# (Esto debe hacerse después de cargar el DataFrame 'df' desde el archivo)
+
 def es_feriado(fecha):
     return fecha in feriados_set
 
@@ -184,7 +205,7 @@ def determinar_zona(localidad_destino):
 
 # --- INTERFAZ STREAMLIT ---
 st.set_page_config(page_title="Calculadora de Lead Time", layout="wide")
-st.title("📊 Calculadora de Lead Time + Indicadores")
+st.title("📊 Calculadora de Lead Time - Indicadores Mejorados")
 st.markdown("Sube tu reporte diario y obtén estadísticas + PPT listo para presentar.")
 uploaded_file = st.file_uploader("📂 Sube tu archivo Excel", type=["xlsx", "xls"])
 
@@ -196,6 +217,16 @@ if uploaded_file is not None:
         # Intentar con la primera hoja si no encuentra "Prueba"
         df = pd.read_excel(uploaded_file, sheet_name=0)
 
+    # --- MEJORADO: Rellenar clientes vacíos con "EVENTUAL" de forma más robusta ---
+    if 'Cliente' in df.columns:
+        # Rellenar NaN y strings vacíos
+        df['Cliente'] = df['Cliente'].fillna("EVENTUAL")
+        df['Cliente'] = df['Cliente'].apply(lambda x: "EVENTUAL" if str(x).strip() == "" else x)
+        df['Cliente'] = df['Cliente'].astype(str)
+    else:
+        st.error("❌ La columna 'Cliente' no existe en el archivo.")
+        st.stop()
+
     # Renombrar columnas si es necesario
     if 'Localidad destino' in df.columns:
         df['Loc'] = df['Localidad destino']
@@ -203,6 +234,18 @@ if uploaded_file is not None:
     # Convertir columnas de fecha
     df['Fecha'] = pd.to_datetime(df['Fecha'], errors='coerce')
     df['Fecha último estado'] = pd.to_datetime(df['Fecha último estado'], errors='coerce')
+
+    # Aplicar la función para crear la columna de semana calendario
+    df['Semana Calendario'] = df['Fecha'].apply(obtener_semana_calendario)
+
+    # --- NUEVO: EXCLUIR LA AGENCIA DE DESTINO DE PAQUETERÍA INTERNA ---
+    # Filtrar para excluir la agencia (6100) Administracion IPE
+    if 'Agencia destino' in df.columns:
+        df_original_count = df.shape[0]
+        df = df[df['Agencia destino'] != "(6100) Administracion IPE"]
+        excluded_count = df_original_count - df.shape[0]
+        if excluded_count > 0:
+            st.info(f"ℹ️ Se excluyeron {excluded_count} guías con destino a '(6100) Administracion IPE' (paquetería interna).")
 
     # Determinar ZONA (AMBA o INTERIOR)
     df['ZONA'] = df['Loc'].apply(determinar_zona)
@@ -259,8 +302,33 @@ if uploaded_file is not None:
         condicion_venta = str(row.get('Condición de venta', '')).upper() if 'Condición de venta' in df.columns else ''
         visitas = row.get('Visitas', 0) if 'Visitas' in df.columns else 0
 
-        # PRIMERO: Verificar si es una devolución (estado cerrado)
-        if "devolución informada" in estado or "devolucion informada" in estado:
+        # --- NUEVO: Verificar si es CANCELADA ---
+        if "cancelada" in estado:
+            return "Cancelada"
+        
+        # --- MEJORADO: Identificar devoluciones de EVENTUAL por el nombre del destinatario ---
+        # Esta lógica se aplica SOLO si el cliente es "EVENTUAL"
+        if row.get('Cliente', '') == "EVENTUAL":
+            # Manejo robusto de la columna Destinatario
+            destinatario = ""
+            if 'Destinatario' in row.index:  # Verificar que la columna existe en la fila
+                destinatario_value = row['Destinatario']
+                # Verificar que no sea NaN, None, o string vacío
+                if pd.notna(destinatario_value) and str(destinatario_value).strip() != "":
+                    destinatario = str(destinatario_value).lower().strip()
+            
+            # Lista de palabras clave que indican una devolución (en minúsculas para comparar)
+            palabras_devolucion = ["devolucion", "devolucion md", "devolucion p-ya", "dev. pedidos ya/", 
+                                  "devoluciones", "devo", "devol", "devolución", "devoluciónes", 
+                                  "devol pedido ya", "dev a origen"]
+            
+            # Verificar si alguna palabra clave está en el destinatario
+            if destinatario and any(palabra in destinatario for palabra in palabras_devolucion):
+                return "Devuelto"
+
+        # --- ACTUALIZADO: Verificar si es una devolución (estado cerrado) ---
+        # Ahora incluye "Devuelta"
+        if "devolución informada" in estado or "devolucion informada" in estado or "devuelta" in estado:
             return "Devuelto"
 
         # Si ED es "NO" y estado es "esperando retiro"
@@ -287,7 +355,7 @@ if uploaded_file is not None:
             # --- NUEVA LÓGICA: PEDIDOS PENDIENTES CON VISITAS ---
             # Calcular días desde la última visita hasta hoy
             fecha_actual_argentina = obtener_fecha_actual_argentina().replace(tzinfo=None)
-            dias_desde_ultima_visita = calcular_dias_habiles(row['Fecha último estado'], fecha_actual_argentina) if pd.notna(row['Fecha último estado']) else None
+            # La variable 'dias_desde_ultima_visita' se eliminó porque no se usaba.
 
             # Verificar si tuvo al menos una visita dentro del tiempo prometido
             lead_time_hasta_visita = calcular_dias_habiles(row['Fecha'], row['Fecha último estado']) if pd.notna(row['Fecha último estado']) else None
@@ -340,15 +408,64 @@ if uploaded_file is not None:
 
     df['Días Restantes'] = df.apply(calcular_dias_restantes, axis=1)
 
+    # --- ALERTA DE EN TRÁNSITO DEMORADO ---
+    def alerta_en_transito_demorado(row):
+        try:
+            estado = str(row['Estado']).lower()
+            fecha_ultimo_estado = row['Fecha último estado']
+            if "en tránsito" in estado and pd.notna(fecha_ultimo_estado):
+                fecha_actual_argentina = obtener_fecha_actual_argentina().replace(tzinfo=None)
+                dias_desde_ultimo_estado = calcular_dias_habiles(fecha_ultimo_estado, fecha_actual_argentina)
+                if dias_desde_ultimo_estado is not None and dias_desde_ultimo_estado >= 2:
+                    return "En tránsito demorado (>48hs)"
+            return ""
+        except Exception as e:
+            return ""
+
+    df['Alerta En Tránsito Demorado'] = df.apply(alerta_en_transito_demorado, axis=1)
+
+    # --- NUEVA ALERTA: ESTADO "CREADA" DEMORADO MÁS DE 24 HORAS ---
+    def alerta_creada_demorada(row):
+        try:
+            estado = str(row['Estado']).lower()
+            fecha_ultimo_estado = row['Fecha último estado']
+            fecha_creacion = row['Fecha']
+            
+            # Verificar si el estado es "Creada" y tenemos fechas válidas
+            if "creada" in estado and pd.notna(fecha_ultimo_estado) and pd.notna(fecha_creacion):
+                fecha_actual_argentina = obtener_fecha_actual_argentina().replace(tzinfo=None)
+                
+                # Calcular diferencia en horas (no días hábiles, sino horas reales)
+                diferencia_horas = (fecha_actual_argentina - fecha_ultimo_estado).total_seconds() / 3600
+                
+                # Si lleva más de 24 horas en estado "Creada"
+                if diferencia_horas >= 24:
+                    # Calcular también días hábiles para información adicional
+                    dias_habiles_creada = calcular_dias_habiles(fecha_creacion, fecha_actual_argentina)
+                    return f"Creada demorada ({diferencia_horas:.1f} horas, {dias_habiles_creada} días hábiles)"
+                
+                # Opcional: Alerta preventiva entre 12-24 horas
+                elif diferencia_horas >= 12:
+                    dias_habiles_creada = calcular_dias_habiles(fecha_creacion, fecha_actual_argentina)
+                    return f"Creada próxima a vencer ({diferencia_horas:.1f} horas)"
+                    
+            return ""
+        except Exception as e:
+            return ""
+
+    df['Alerta Creada Demorada'] = df.apply(alerta_creada_demorada, axis=1)
+
     # --- NUEVAS ALERTAS MEJORADAS ---
-    # Alerta para visitas en tiempo pero sin seguimiento
-    def alerta_visita_sin_seguimiento(row):
+    # Alerta para pedidos con MÚLTIPLES visitas sin seguimiento (2+ visitas, 3+ días)
+    def alerta_seguimiento_visitas(row):
         try:
             estado = str(row['Estado']).lower()
             cumplimiento = str(row['Cumplimiento'])
             fecha_ultimo_estado = row['Fecha último estado']
-            # Verificar si es un pedido con visita en tiempo que requiere acción
-            if "Visita en Tiempo" in cumplimiento and pd.notna(fecha_ultimo_estado):
+            visitas = row.get('Visitas', 0) if 'Visitas' in df.columns else 0
+
+            # Solo para pedidos con 2 o más visitas
+            if visitas >= 2 and "Visita" in cumplimiento and pd.notna(fecha_ultimo_estado):
                 fecha_actual_argentina = obtener_fecha_actual_argentina().replace(tzinfo=None)
                 dias_desde_visita = calcular_dias_habiles(fecha_ultimo_estado, fecha_actual_argentina)
                 if dias_desde_visita is not None and dias_desde_visita >= 3:
@@ -366,20 +483,7 @@ if uploaded_file is not None:
         except Exception as e:
             return ""
 
-    df['Alerta Seguimiento Visita'] = df.apply(alerta_visita_sin_seguimiento, axis=1)
-
-    # Alerta para pedidos con múltiples visitas sin resultado
-    def alerta_visitas_multiples(row):
-        try:
-            visitas = row.get('Visitas', 0) if 'Visitas' in df.columns else 0
-            estado = str(row['Estado']).lower()
-            if visitas >= 2 and ("ausente" in estado or "rechazado" in estado):
-                return "Múltiples visitas sin éxito - Evaluar devolución"
-            return ""
-        except Exception as e:
-            return ""
-
-    df['Alerta Visitas Múltiples'] = df.apply(alerta_visitas_multiples, axis=1)
+    df['Alerta Seguimiento Visitas'] = df.apply(alerta_seguimiento_visitas, axis=1)
 
     # --- NUEVA ALERTA: UNA SOLA VISITA SIN SEGUIMIENTO EN 5 DÍAS ---
     def alerta_una_visita_sin_seguimiento(row):
@@ -396,7 +500,7 @@ if uploaded_file is not None:
             ]
             es_estado_visita = any(estado_visita in estado for estado_visita in estados_visita)
 
-            # Verificar condiciones para la alerta
+            # Verificar condiciones para la alerta (exactamente 1 visita)
             if (visitas == 1 and 
                 es_estado_visita and 
                 pd.notna(fecha_ultimo_estado) and
@@ -446,6 +550,7 @@ if uploaded_file is not None:
 
     df['Alerta Redespacho'] = df.apply(alerta_redespacho, axis=1)
 
+
     def alerta_en_transito_demorado(row):
         try:
             estado = str(row['Estado']).lower()
@@ -460,7 +565,6 @@ if uploaded_file is not None:
             return ""
         
     df['Alerta En Tránsito Demorado'] = df.apply(alerta_en_transito_demorado, axis=1)
-    
 
     def alerta_pendiente_fuera_tiempo(row):
         cumplimiento = str(row['Cumplimiento'])
@@ -486,7 +590,32 @@ if uploaded_file is not None:
 
     df['Alerta Pago Pendiente'] = df.apply(alerta_pago_pendiente, axis=1)
 
-    # --- ASIGNAR PRIORIDAD A LAS ALERTAS ---
+    # --- NUEVA ALERTA: REPROGRAMADA CON 0 VISITAS ---
+    def alerta_reprogramada_sin_visitas(row):
+        try:
+            estado = str(row['Estado']).lower()
+            visitas = row.get('Visitas', 0) if 'Visitas' in df.columns else 0
+            # Verificar si el estado contiene "reprogramada" y tiene 0 visitas
+            if "reprogramada" in estado and visitas == 0:
+                fecha_actual_argentina = obtener_fecha_actual_argentina().replace(tzinfo=None)
+                fecha_ultimo_estado = row['Fecha último estado']
+
+                if pd.notna(fecha_ultimo_estado):
+                    dias_desde_reprogramacion = calcular_dias_habiles(fecha_ultimo_estado, fecha_actual_argentina)
+                    if dias_desde_reprogramacion is not None and dias_desde_reprogramacion >= 2:
+                        return f"Reprogramada sin visita ({dias_desde_reprogramacion} días hábiles)"
+                    else:
+                        return "Reprogramada sin visita"
+                else:
+                    return "Reprogramada sin visita"
+            return ""
+        except Exception as e:
+            return ""
+        return ""
+
+    df['Alerta Reprogramada Sin Visitas'] = df.apply(alerta_reprogramada_sin_visitas, axis=1)
+
+    # --- ASIGNAR PRIORIDAD A LAS ALERTAS (ACTUALIZADA CON NUEVA ALERTA) ---
     def asignar_prioridad(row):
         if row['Alerta Pendiente Fuera Tiempo'] == "Fuera de tiempo crítico":
             return "ALTA - Fuera de Tiempo"
@@ -494,12 +623,18 @@ if uploaded_file is not None:
             return "ALTA - Devolución Demorada"
         elif row['Alerta Redespacho'] == "Redespacho demorado":
             return "ALTA - Redespacho"
-        elif row['Alerta Visitas Múltiples'] != "":
-            return "MEDIA - Visitas Múltiples"
+        elif row['Alerta En Tránsito Demorado'] != "":
+            return "ALTA - Fuera de Tiempo"
+        elif row['Alerta Reprogramada Sin Visitas'] != "":
+            return "ALTA - Reprogramada Sin Visita"
+        elif row['Alerta Creada Demorada'] != "" and "demorada" in row['Alerta Creada Demorada'].lower():
+            return "ALTA - Creada Demorada"
+        elif row['Alerta Seguimiento Visitas'] != "":
+            return "MEDIA - Seguimiento Visitas"
         elif row['Alerta Una Visita Sin Seguimiento'] != "":
             return "MEDIA - 1 Visita Sin Seg."
-        elif row['Alerta Seguimiento Visita'] != "":
-            return "BAJA - Seguimiento Visita"
+        elif row['Alerta Creada Demorada'] != "" and "próxima a vencer" in row['Alerta Creada Demorada']:
+            return "MEDIA - Creada Próxima a Vencer"
         elif row['Alerta Pago Pendiente'] == "Pago pendiente demorado":
             return "BAJA - Pago Pendiente"
         else:
@@ -508,7 +643,17 @@ if uploaded_file is not None:
     df['Prioridad Alerta'] = df.apply(asignar_prioridad, axis=1)
 
     # Ordenar el DataFrame por prioridad para que las alertas altas aparezcan primero
-    prioridad_orden = {"ALTA - Fuera de Tiempo": 1, "ALTA - Devolución Demorada": 2, "ALTA - Redespacho": 3, "MEDIA - Visitas Múltiples": 4, "MEDIA - 1 Visita Sin Seg.": 5, "BAJA - Seguimiento Visita": 6, "BAJA - Pago Pendiente": 7}
+    prioridad_orden = {
+        "ALTA - Fuera de Tiempo": 1, 
+        "ALTA - Devolución Demorada": 2, 
+        "ALTA - Redespacho": 3,
+        "ALTA - Reprogramada Sin Visita": 4,
+        "ALTA - Creada Demorada": 4,  # Nueva prioridad
+        "MEDIA - Seguimiento Visitas": 5, 
+        "MEDIA - 1 Visita Sin Seg.": 6,
+        "MEDIA - Creada Próxima a Vencer": 7,  # Nueva prioridad
+        "BAJA - Pago Pendiente": 8
+    }
     df['Orden Prioridad'] = df['Prioridad Alerta'].map(prioridad_orden).fillna(999)
     df = df.sort_values('Orden Prioridad').reset_index(drop=True)
 
@@ -576,11 +721,559 @@ if uploaded_file is not None:
     if 'Condición de venta' in df.columns and condicion_venta_seleccionada != "Todas":
         df = df[df['Condición de venta'] == condicion_venta_seleccionada]
 
+    # --- NUEVA SECCIÓN: PORCENTAJE DE CUMPLIMIENTO POR SEMANA CON ALERTAS DE VARIACIÓN ---
+    st.header("📈 Porcentaje de Cumplimiento por Semana con Alertas de Variación")
+
+    # Calcular el porcentaje de cumplimiento por semana
+    def calcular_cumplimiento_semana(grupo):
+        total_pedidos_semana = grupo[grupo['Cumplimiento'] != "Cancelada"].shape[0]
+        if total_pedidos_semana == 0:
+            return 0
+        
+        # Contar pedidos cumplidos (entregas en tiempo + visitas en tiempo)
+        cumplidos_semana = grupo[
+            grupo['Cumplimiento'].isin([
+                "Entregada - En Tiempo", 
+                "Entregada - En Tiempo (PD: Pago Pendiente)",
+                "Pendiente - Visita en Tiempo",
+                "Pendiente - Visita en Tiempo (Datos Incompletos)",
+                "Pendiente - Visita en Tiempo (Domicilio Incorrecto)", 
+                "Pendiente - Visita en Tiempo (Cliente Ausente)",
+                "Pendiente - Visita en Tiempo (Cliente Rechazó)"
+            ])
+        ].shape[0]
+        
+        return (cumplidos_semana / total_pedidos_semana * 100)
+
+    # Agrupar por semana y calcular el porcentaje de cumplimiento
+    df_semana = df[df['Cumplimiento'] != "Cancelada"].groupby('Semana Calendario').apply(
+        calcular_cumplimiento_semana
+    ).reset_index(name='Porcentaje Cumplimiento')
+
+    # Ordenar por semana para calcular variaciones
+    df_semana = df_semana.sort_values('Semana Calendario').reset_index(drop=True)
+
+    # Calcular variación respecto a la semana anterior
+    df_semana['Variación vs Semana Anterior'] = df_semana['Porcentaje Cumplimiento'].diff()
+
+    # Calcular variación porcentual
+    df_semana['Variación Porcentual'] = (df_semana['Porcentaje Cumplimiento'].pct_change() * 100).round(2)
+
+    # Formatear el porcentaje
+    df_semana['Porcentaje Cumplimiento'] = df_semana['Porcentaje Cumplimiento'].round(2)
+
+    # --- FUNCIÓN PARA GENERAR ALERTAS DE VARIACIÓN ---
+    def generar_alerta_variacion(row):
+        variacion = row['Variación vs Semana Anterior']
+        variacion_porcentual = row['Variación Porcentual']
+        
+        if pd.isna(variacion):
+            return "🔵 Semana de referencia"
+        elif variacion > 5:  # Mejora significativa (>5 puntos)
+            return f"🟢 Excelente! +{variacion:.1f}pts (+{variacion_porcentual:.1f}%)"
+        elif variacion > 2:  # Mejora moderada
+            return f"🟡 Mejoró +{variacion:.1f}pts (+{variacion_porcentual:.1f}%)"
+        elif variacion >= -2:  # Estable
+            return f"⚪ Estable {variacion:+.1f}pts"
+        elif variacion > -5:  # Caída moderada
+            return f"🟠 Alerta! {variacion:.1f}pts ({variacion_porcentual:+.1f}%)"
+        else:  # Caída significativa
+            return f"🔴 CRÍTICO! {variacion:.1f}pts ({variacion_porcentual:+.1f}%)"
+
+    df_semana['Alerta Variación'] = df_semana.apply(generar_alerta_variacion, axis=1)
+
+    # Mostrar la tabla de semanas con alertas
+    st.subheader("Tabla de Cumplimiento por Semana con Alertas de Variación")
+    st.dataframe(df_semana[['Semana Calendario', 'Porcentaje Cumplimiento', 'Alerta Variación']], 
+                use_container_width=True)
+
+    # --- GRÁFICO MEJORADO CON ANOTACIONES DE VARIACIÓN ---
+    if len(df_semana) > 1:
+        fig_semana = px.line(
+            df_semana,
+            x='Semana Calendario',
+            y='Porcentaje Cumplimiento',
+            title='Evolución del Porcentaje de Cumplimiento por Semana con Alertas de Variación',
+            markers=True,
+            line_shape='linear'
+        )
+        
+        # Agregar anotaciones para las variaciones significativas
+        for i, row in df_semana.iterrows():
+            if i > 0:  # No aplicar a la primera semana
+                variacion = row['Variación vs Semana Anterior']
+                if abs(variacion) >= 2:  # Solo anotar variaciones significativas
+                    color = 'green' if variacion > 0 else 'red'
+                    fig_semana.add_annotation(
+                        x=row['Semana Calendario'],
+                        y=row['Porcentaje Cumplimiento'],
+                        text=f"{variacion:+.1f}pts",
+                        showarrow=True,
+                        arrowhead=2,
+                        arrowsize=1,
+                        arrowwidth=2,
+                        arrowcolor=color,
+                        bgcolor=color,
+                        bordercolor=color,
+                        font=dict(color='white', size=10)
+                    )
+        
+        # Mejorar formato del gráfico
+        fig_semana.update_layout(
+            xaxis_title='Semana Calendario',
+            yaxis_title='Porcentaje de Cumplimiento (%)',
+            yaxis=dict(range=[0, 100]),
+            hovermode='x unified'
+        )
+        
+        # Agregar línea de referencia
+        fig_semana.add_hline(
+            y=80, 
+            line_dash="dash", 
+            line_color="red",
+            annotation_text="Objetivo 80%"
+        )
+        
+        st.plotly_chart(fig_semana, use_container_width=True)
+
+    # --- RESUMEN DE TENDENCIAS ---
+    st.subheader("📊 Resumen de Tendencias por Semana")
+
+    if len(df_semana) > 1:
+        # Calcular métricas de tendencia
+        ultima_semana = df_semana.iloc[-1]
+        penultima_semana = df_semana.iloc[-2] if len(df_semana) > 1 else None
+        
+        mejora_semanas = (df_semana['Variación vs Semana Anterior'] > 0).sum()
+        total_comparables = len(df_semana) - 1  # Excluir la primera semana
+        
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            if penultima_semana is not None:
+                variacion_actual = ultima_semana['Variación vs Semana Anterior']
+                if not pd.isna(variacion_actual):
+                    if variacion_actual > 0:
+                        st.success(f"📈 Semana {ultima_semana['Semana Calendario']}: **+{variacion_actual:.1f}pts** vs semana anterior")
+                    else:
+                        st.error(f"📉 Semana {ultima_semana['Semana Calendario']}: **{variacion_actual:.1f}pts** vs semana anterior")
+        
+        with col2:
+            if total_comparables > 0:
+                tasa_mejora = (mejora_semanas / total_comparables) * 100
+                st.metric("📊 Tasa de Mejora Semanal", f"{tasa_mejora:.1f}%")
+        
+        with col3:
+            if len(df_semana) >= 4:
+                # Tendencia últimas 4 semanas
+                ultimas_4 = df_semana.tail(4)
+                tendencia = ultimas_4['Porcentaje Cumplimiento'].mean()
+                st.metric("📅 Promedio Últimas 4 Semanas", f"{tendencia:.1f}%")
+
+    # --- NOTIFICACIONES PUSH PARA VARIACIONES CRÍTICAS ---
+    st.header("🔔 Notificaciones de Variación en Tiempo Real")
+
+    if len(df_semana) > 1:
+        ultima_semana = df_semana.iloc[-1]
+        variacion_actual = ultima_semana['Variación vs Semana Anterior']
+        
+        if not pd.isna(variacion_actual):
+            if variacion_actual < -10:
+                st.error(f"""
+                🚨 **ALERTA CRÍTICA** 
+                **Caída drástica en la última semana:** {variacion_actual:.1f} puntos
+                **Recomendación:** Revisar procesos urgentemente
+                """)
+            elif variacion_actual < -5:
+                st.warning(f"""
+                ⚠️ **ALERTA IMPORTANTE**
+                **Caída significativa en la última semana:** {variacion_actual:.1f} puntos
+                **Recomendación:** Analizar causas y tomar acciones
+                """)
+            elif variacion_actual > 10:
+                st.success(f"""
+                🎉 **LOGRO DESTACADO**
+                **Mejora excepcional en la última semana:** +{variacion_actual:.1f} puntos
+                **Recomendación:** Replicar buenas prácticas
+                """)
+            elif variacion_actual > 5:
+                st.info(f"""
+                👍 **BUEN DESEMPEÑO**
+                **Mejora significativa en la última semana:** +{variacion_actual:.1f} puntos
+                **Recomendación:** Mantener tendencia positiva
+                """)
+
+    # --- NUEVA SECCIÓN: PORCENTAJE DE CUMPLIMIENTO POR SEMANA Y ZONA CON ALERTAS DE VARIACIÓN ---
+    st.header("📈 Porcentaje de Cumplimiento por Semana y Zona")
+
+    # Calcular el porcentaje de cumplimiento por semana y zona
+    def calcular_cumplimiento_semana_zona(grupo):
+        total_pedidos_semana = grupo[grupo['Cumplimiento'] != "Cancelada"].shape[0]
+        if total_pedidos_semana == 0:
+            return 0
+        
+        # Contar pedidos cumplidos (entregas en tiempo + visitas en tiempo)
+        cumplidos_semana = grupo[
+            grupo['Cumplimiento'].isin([
+                "Entregada - En Tiempo", 
+                "Entregada - En Tiempo (PD: Pago Pendiente)",
+                "Pendiente - Visita en Tiempo",
+                "Pendiente - Visita en Tiempo (Datos Incompletos)",
+                "Pendiente - Visita en Tiempo (Domicilio Incorrecto)", 
+                "Pendiente - Visita en Tiempo (Cliente Ausente)",
+                "Pendiente - Visita en Tiempo (Cliente Rechazó)"
+            ])
+        ].shape[0]
+        
+        return (cumplidos_semana / total_pedidos_semana * 100)
+
+    # Agrupar por semana y zona para calcular el porcentaje de cumplimiento
+    df_semana_zona = df[df['Cumplimiento'] != "Cancelada"].groupby(['Semana Calendario', 'ZONA']).apply(
+        calcular_cumplimiento_semana_zona
+    ).reset_index(name='Porcentaje Cumplimiento')
+
+    # También calcular el total por semana
+    df_semana_total = df[df['Cumplimiento'] != "Cancelada"].groupby('Semana Calendario').apply(
+        calcular_cumplimiento_semana_zona
+    ).reset_index(name='Porcentaje Cumplimiento')
+    df_semana_total['ZONA'] = 'TOTAL'
+
+    # Combinar ambos DataFrames
+    df_semana_completo = pd.concat([df_semana_zona, df_semana_total], ignore_index=True)
+
+    # Ordenar por semana y zona para calcular variaciones
+    df_semana_completo = df_semana_completo.sort_values(['Semana Calendario', 'ZONA']).reset_index(drop=True)
+
+    # Calcular variación respecto a la semana anterior por zona
+    df_semana_completo['Variación vs Semana Anterior'] = df_semana_completo.groupby('ZONA')['Porcentaje Cumplimiento'].diff()
+
+    # Calcular variación porcentual por zona
+    df_semana_completo['Variación Porcentual'] = (df_semana_completo.groupby('ZONA')['Porcentaje Cumplimiento'].pct_change() * 100).round(2)
+
+    # Formatear el porcentaje
+    df_semana_completo['Porcentaje Cumplimiento'] = df_semana_completo['Porcentaje Cumplimiento'].round(2)
+
+    # --- FUNCIÓN PARA GENERAR ALERTAS DE VARIACIÓN POR ZONA ---
+    def generar_alerta_variacion_zona(row):
+        variacion = row['Variación vs Semana Anterior']
+        variacion_porcentual = row['Variación Porcentual']
+        
+        if pd.isna(variacion):
+            return "🔵 Semana de referencia"
+        elif variacion > 5:  # Mejora significativa (>5 puntos)
+            return f"🟢 Excelente! +{variacion:.1f}pts (+{variacion_porcentual:.1f}%)"
+        elif variacion > 2:  # Mejora moderada
+            return f"🟡 Mejoró +{variacion:.1f}pts (+{variacion_porcentual:.1f}%)"
+        elif variacion >= -2:  # Estable
+            return f"⚪ Estable {variacion:+.1f}pts"
+        elif variacion > -5:  # Caída moderada
+            return f"🟠 Alerta! {variacion:.1f}pts ({variacion_porcentual:+.1f}%)"
+        else:  # Caída significativa
+            return f"🔴 CRÍTICO! {variacion:.1f}pts ({variacion_porcentual:+.1f}%)"
+
+    df_semana_completo['Alerta Variación'] = df_semana_completo.apply(generar_alerta_variacion_zona, axis=1)
+
+    # Mostrar la tabla de semanas con alertas por zona
+    st.subheader("Tabla de Cumplimiento por Semana y Zona con Alertas de Variación")
+
+    # Pivotar la tabla para mejor visualización
+    df_pivot = df_semana_completo.pivot_table(
+        index='Semana Calendario', 
+        columns='ZONA', 
+        values=['Porcentaje Cumplimiento', 'Alerta Variación'],
+        aggfunc='first'
+    )
+
+    # Reorganizar las columnas para mejor presentación
+    df_display = pd.DataFrame()
+    for semana in df_pivot.index:
+        row_data = {'Semana Calendario': semana}
+        
+        for zona in ['AMBA', 'INTERIOR', 'TOTAL']:
+            if zona in df_pivot['Porcentaje Cumplimiento'].columns:
+                row_data[f'{zona} - % Cumplimiento'] = df_pivot['Porcentaje Cumplimiento'][zona][semana]
+                row_data[f'{zona} - Alerta'] = df_pivot['Alerta Variación'][zona][semana]
+        
+        df_display = pd.concat([df_display, pd.DataFrame([row_data])], ignore_index=True)
+
+    # Ordenar por semana
+    df_display = df_display.sort_values('Semana Calendario').reset_index(drop=True)
+
+    # Formatear porcentajes
+    for col in df_display.columns:
+        if '% Cumplimiento' in col:
+            df_display[col] = df_display[col].apply(lambda x: f"{x:.1f}%" if pd.notna(x) else "N/A")
+
+    st.dataframe(df_display, use_container_width=True)
+
+    # --- GRÁFICO MEJORADO CON LÍNEAS POR ZONA Y ANOTACIONES ---
+    if len(df_semana_completo) > 1:
+        fig_semana_zona = px.line(
+            df_semana_completo,
+            x='Semana Calendario',
+            y='Porcentaje Cumplimiento',
+            color='ZONA',
+            title='Evolución del Porcentaje de Cumplimiento por Semana y Zona',
+            markers=True,
+            line_shape='linear',
+            color_discrete_map={
+                'AMBA': '#28a745',
+                'INTERIOR': '#007bff', 
+                'TOTAL': '#ff6b00'
+            }
+        )
+        
+        # Agregar anotaciones para variaciones significativas por zona
+        for zona in ['AMBA', 'INTERIOR', 'TOTAL']:
+            df_zona = df_semana_completo[df_semana_completo['ZONA'] == zona].sort_values('Semana Calendario')
+            for i, row in df_zona.iterrows():
+                if i > 0:  # No aplicar a la primera semana de cada zona
+                    variacion = row['Variación vs Semana Anterior']
+                    if not pd.isna(variacion) and abs(variacion) >= 2:  # Solo anotar variaciones significativas
+                        color = 'green' if variacion > 0 else 'red'
+                        # Posicionar las anotaciones para evitar superposición
+                        y_offset = 0
+                        if zona == 'AMBA':
+                            y_offset = 3
+                        elif zona == 'INTERIOR':
+                            y_offset = -3
+                        # Para TOTAL, no aplicar offset o aplicar uno diferente
+                        
+                        fig_semana_zona.add_annotation(
+                            x=row['Semana Calendario'],
+                            y=row['Porcentaje Cumplimiento'] + y_offset,
+                            text=f"{variacion:+.1f}",
+                            showarrow=True,
+                            arrowhead=2,
+                            arrowsize=1,
+                            arrowwidth=2,
+                            arrowcolor=color,
+                            bgcolor=color,
+                            bordercolor=color,
+                            font=dict(color='white', size=8),
+                            yshift=10 if variacion > 0 else -10
+                        )
+        
+        # Mejorar formato del gráfico
+        fig_semana_zona.update_layout(
+            xaxis_title='Semana Calendario',
+            yaxis_title='Porcentaje de Cumplimiento (%)',
+            yaxis=dict(range=[0, 100]),
+            hovermode='x unified',
+            legend=dict(
+                orientation="h",
+                yanchor="bottom",
+                y=1.02,
+                xanchor="right",
+                x=1
+            )
+        )
+        
+        # Agregar línea de referencia
+        fig_semana_zona.add_hline(
+            y=80, 
+            line_dash="dash", 
+            line_color="red",
+            annotation_text="Objetivo 80%"
+        )
+        
+        st.plotly_chart(fig_semana_zona, use_container_width=True)
+
+    # --- RESUMEN DE TENDENCIAS POR ZONA ---
+    st.subheader("📊 Resumen de Tendencias por Semana y Zona")
+
+    if len(df_semana_completo) > 1:
+        # Crear columnas para cada zona
+        zonas = ['AMBA', 'INTERIOR', 'TOTAL']
+        cols = st.columns(3)
+        
+        for idx, zona in enumerate(zonas):
+            with cols[idx]:
+                st.subheader(f"Zona {zona}")
+                
+                # Filtrar datos de la zona
+                df_zona = df_semana_completo[df_semana_completo['ZONA'] == zona].sort_values('Semana Calendario')
+                
+                if len(df_zona) > 1:
+                    ultima_semana = df_zona.iloc[-1]
+                    penultima_semana = df_zona.iloc[-2] if len(df_zona) > 1 else None
+                    
+                    if penultima_semana is not None:
+                        variacion_actual = ultima_semana['Variación vs Semana Anterior']
+                        if not pd.isna(variacion_actual):
+                            if variacion_actual > 0:
+                                st.success(f"📈 **+{variacion_actual:.1f}pts** vs semana anterior")
+                            else:
+                                st.error(f"📉 **{variacion_actual:.1f}pts** vs semana anterior")
+                    
+                    # Mostrar métricas clave
+                    st.metric(
+                        f"Última Semana {ultima_semana['Semana Calendario']}",
+                        f"{ultima_semana['Porcentaje Cumplimiento']:.1f}%"
+                    )
+                    
+                    if len(df_zona) >= 4:
+                        ultimas_4 = df_zona.tail(4)
+                        tendencia = ultimas_4['Porcentaje Cumplimiento'].mean()
+                        st.metric("Promedio Últimas 4 Semanas", f"{tendencia:.1f}%")
+
+    # --- ANÁLISIS COMPARATIVO ENTRE ZONAS ---
+    st.header("📊 Análisis Comparativo entre Zonas")
+
+    if len(df_semana_completo) > 1:
+        # Calcular diferencia AMBA vs INTERIOR por semana
+        df_amba = df_semana_completo[df_semana_completo['ZONA'] == 'AMBA'][['Semana Calendario', 'Porcentaje Cumplimiento']]
+        df_interior = df_semana_completo[df_semana_completo['ZONA'] == 'INTERIOR'][['Semana Calendario', 'Porcentaje Cumplimiento']]
+        
+        df_comparativo = pd.merge(df_amba, df_interior, on='Semana Calendario', suffixes=('_AMBA', '_INTERIOR'))
+        df_comparativo['Diferencia (AMBA - INTERIOR)'] = df_comparativo['Porcentaje Cumplimiento_AMBA'] - df_comparativo['Porcentaje Cumplimiento_INTERIOR']
+        
+        # Gráfico de diferencias
+        fig_diferencias = px.bar(
+            df_comparativo,
+            x='Semana Calendario',
+            y='Diferencia (AMBA - INTERIOR)',
+            title='Diferencia de Cumplimiento: AMBA vs INTERIOR',
+            color='Diferencia (AMBA - INTERIOR)',
+            color_continuous_scale='RdYlGn',
+            color_continuous_midpoint=0
+        )
+        
+        fig_diferencias.update_layout(
+            xaxis_title='Semana Calendario',
+            yaxis_title='Diferencia de Cumplimiento (%)',
+            hovermode='x unified'
+        )
+        
+        # Agregar línea en cero
+        fig_diferencias.add_hline(y=0, line_dash="solid", line_color="black")
+        
+        st.plotly_chart(fig_diferencias, use_container_width=True)
+        
+        # Resumen de diferencias
+        st.subheader("🔍 Resumen de Diferencias AMBA vs INTERIOR")
+        
+        if len(df_comparativo) > 0:
+            ultima_diferencia = df_comparativo.iloc[-1]['Diferencia (AMBA - INTERIOR)']
+            promedio_diferencia = df_comparativo['Diferencia (AMBA - INTERIOR)'].mean()
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                if ultima_diferencia > 0:
+                    st.success(f"**Última semana:** AMBA +{ultima_diferencia:.1f}pts sobre INTERIOR")
+                else:
+                    st.error(f"**Última semana:** INTERIOR +{abs(ultima_diferencia):.1f}pts sobre AMBA")
+            
+            with col2:
+                if promedio_diferencia > 0:
+                    st.info(f"**Promedio histórico:** AMBA +{promedio_diferencia:.1f}pts sobre INTERIOR")
+                else:
+                    st.warning(f"**Promedio histórico:** INTERIOR +{abs(promedio_diferencia):.1f}pts sobre AMBA")
+
+    # --- NOTIFICACIONES PUSH PARA VARIACIONES CRÍTICAS POR ZONA ---
+    st.header("🔔 Notificaciones de Variación en Tiempo Real por Zona")
+
+    if len(df_semana_completo) > 1:
+        for zona in ['AMBA', 'INTERIOR', 'TOTAL']:
+            df_zona = df_semana_completo[df_semana_completo['ZONA'] == zona].sort_values('Semana Calendario')
+            
+            if len(df_zona) > 1:
+                ultima_semana = df_zona.iloc[-1]
+                variacion_actual = ultima_semana['Variación vs Semana Anterior']
+                
+                if not pd.isna(variacion_actual):
+                    if variacion_actual < -10:
+                        st.error(f"""
+                        🚨 **ALERTA CRÍTICA - {zona}** 
+                        **Caída drástica en la última semana:** {variacion_actual:.1f} puntos
+                        **Recomendación:** Revisar procesos urgentemente en zona {zona}
+                        """)
+                    elif variacion_actual < -5:
+                        st.warning(f"""
+                        ⚠️ **ALERTA IMPORTANTE - {zona}**
+                        **Caída significativa en la última semana:** {variacion_actual:.1f} puntos
+                        **Recomendación:** Analizar causas y tomar acciones en zona {zona}
+                        """)
+                    elif variacion_actual > 10:
+                        st.success(f"""
+                        🎉 **LOGRO DESTACADO - {zona}**
+                        **Mejora excepcional en la última semana:** +{variacion_actual:.1f} puntos
+                        **Recomendación:** Replicar buenas prácticas de zona {zona}
+                        """)
+                    elif variacion_actual > 5:
+                        st.info(f"""
+                        👍 **BUEN DESEMPEÑO - {zona}**
+                        **Mejora significativa en la última semana:** +{variacion_actual:.1f} puntos
+                        **Recomendación:** Mantener tendencia positiva en zona {zona}
+                        """)
+
+    # --- AGREGAR ALERTAS AL DATAFRAME PRINCIPAL ---
+    # Crear diccionarios de mapeo
+    mapeo_semana = df_semana.set_index('Semana Calendario')['Porcentaje Cumplimiento'].to_dict()
+    mapeo_alerta = df_semana.set_index('Semana Calendario')['Alerta Variación'].to_dict()
+    mapeo_variacion = df_semana.set_index('Semana Calendario')['Variación vs Semana Anterior'].to_dict()
+
+    # Aplicar mapeos al DataFrame principal
+    df['Porcentaje Cumplimiento Semana'] = df['Semana Calendario'].map(mapeo_semana)
+    df['Alerta Variación Semana'] = df['Semana Calendario'].map(mapeo_alerta)
+    df['Variación vs Semana Anterior'] = df['Semana Calendario'].map(mapeo_variacion)
+
+    # Mover las columnas al lado de "Semana Calendario"
+    columnas = df.columns.tolist()
+    pos_semana = columnas.index('Semana Calendario')
+
+    # Insertar las nuevas columnas después de la semana
+    nuevas_columnas = ['Porcentaje Cumplimiento Semana', 'Alerta Variación Semana', 'Variación vs Semana Anterior']
+    for i, col in enumerate(nuevas_columnas):
+        columnas.insert(pos_semana + 1 + i, col)
+        columnas.remove(col)
+
+    # Reordenar el DataFrame
+    df = df[columnas]
+
+    # Formatear columnas
+    df['Porcentaje Cumplimiento Semana'] = df['Porcentaje Cumplimiento Semana'].apply(
+        lambda x: f"{x:.1f}%" if pd.notna(x) else "N/A"
+    )
+    df['Variación vs Semana Anterior'] = df['Variación vs Semana Anterior'].apply(
+        lambda x: f"{x:+.1f} pts" if pd.notna(x) else "N/A"
+    )
+
+    # --- ALERTAS CRÍTICAS EN EL SIDEBAR ---
+    st.sidebar.header("🚨 Alertas Críticas de Variación")
+
+    if len(df_semana) > 1:
+        # Buscar variaciones críticas (caídas > 5 puntos)
+        alertas_criticas = df_semana[
+            (df_semana['Variación vs Semana Anterior'] < -5) & 
+            (pd.notna(df_semana['Variación vs Semana Anterior']))
+        ]
+        
+        if not alertas_criticas.empty:
+            st.sidebar.error("### 📉 Caídas Significativas")
+            for _, alerta in alertas_criticas.iterrows():
+                st.sidebar.write(f"**Semana {alerta['Semana Calendario']}**: {alerta['Variación vs Semana Anterior']:.1f}pts")
+        
+        # Buscar mejoras significativas
+        mejoras_significativas = df_semana[
+            (df_semana['Variación vs Semana Anterior'] > 5) & 
+            (pd.notna(df_semana['Variación vs Semana Anterior']))
+        ]
+        
+        if not mejoras_significativas.empty:
+            st.sidebar.success("### 📈 Mejoras Significativas")
+            for _, mejora in mejoras_significativas.iterrows():
+                st.sidebar.write(f"**Semana {mejora['Semana Calendario']}**: +{mejora['Variación vs Semana Anterior']:.1f}pts")
+
     # --- ESTADÍSTICAS MEJORADAS ---
-    st.header("📊 Indicadores de Cumplimiento")
-    total_pedidos = df.shape[0]
+    st.header("📊 Indicadores/Alertas")
+
+    # El total de pedidos ahora EXCLUYE las canceladas
+    total_pedidos = df[df['Cumplimiento'] != "Cancelada"].shape[0]
     entregados = df[df['Cumplimiento'].str.startswith("Entregada")].shape[0]
     devueltos = df[df['Cumplimiento'] == "Devuelto"].shape[0]
+    canceladas = df[df['Cumplimiento'] == "Cancelada"].shape[0]
     pendientes_reales = total_pedidos - entregados - devueltos
 
     # Nuevas categorías para visitas
@@ -618,16 +1311,14 @@ if uploaded_file is not None:
 
     # --- NUEVOS KPIs DE EFICIENCIA ---
     # Primer Intento de Entrega (First Attempt Delivery Rate - FADR)
-    # Consideramos como "Primer Intento" los pedidos entregados que tuvieron 0 o 1 visita
     primer_intento_entrega = df[
         (df['Cumplimiento'].str.startswith("Entregada")) &
-        (df.get('Visitas', 0) <= 1) # Ahora incluye 0 y 1
+        (df.get('Visitas', 0) <= 1)
     ].shape[0]
 
     fadr = (primer_intento_entrega / entregados * 100) if entregados > 0 else 0
 
     # Pedidos por Visita (Solo para entregados, para no distorsionar)
-    # Para este cálculo, solo consideramos los pedidos entregados que tuvieron al menos 1 visita
     total_visitas_entregados = df[df['Cumplimiento'].str.startswith("Entregada")]['Visitas'].sum()
     pedidos_con_visita = df[(df['Cumplimiento'].str.startswith("Entregada")) & (df.get('Visitas', 0) >= 1)].shape[0]
     pedidos_por_visita = (pedidos_con_visita / total_visitas_entregados) if total_visitas_entregados > 0 else 0
@@ -642,42 +1333,50 @@ if uploaded_file is not None:
 
     tasa_rechazo_ausencia = (rechazos_ausentes / total_con_visita * 100) if total_con_visita > 0 else 0
 
-    # Métricas principales en una sola línea
-    col1, col2, col3, col4 = st.columns(4)
+    # --- NUEVAS MÉTRICAS PARA ALERTAS DE "CREADA" ---
+    alertas_creada_criticas = df[df['Alerta Creada Demorada'].str.contains("demorada", na=False)].shape[0]
+    alertas_creada_preventivas = df[df['Alerta Creada Demorada'].str.contains("próxima a vencer", na=False)].shape[0]
+
+    # --- PRESENTACIÓN DE MÉTRICAS EN 5 COLUMNAS (COMO EN LA IMAGEN) ---
+
+    col1, col2, col3, col4, col5 = st.columns(5)
+
+    # Columna 1: Volumen
     with col1:
-        st.metric("📦 Total Pedidos", total_pedidos)
+        st.metric("📦 Total Pedidos (Excl. Canceladas)", total_pedidos)
+        st.metric("🎯 Cumplimiento Tradicional", f"{cumplimiento_tradicional:.1f}%")
+        st.metric("📈 Cumplimiento Gestión", f"{cumplimiento_gestion:.1f}%")
+        st.metric("🎯 FADR (1er Intento)", f"{fadr:.1f}%")
+
+    # Columna 2: Entregas y Real
     with col2:
         st.metric("✅ Entregados", entregados, f"{(entregados/total_pedidos*100):.1f}%")
-    with col3:
-        st.metric("🔄 Devueltos", devueltos, f"{(devueltos/total_pedidos*100):.1f}%")
-    with col4:
-        st.metric("⏳ Pendientes", pendientes_reales, f"{(pendientes_reales/total_pedidos*100):.1f}%")
-
-    # Segunda línea de métricas - CON EL NUEVO INDICADOR PRINCIPAL
-    col5, col6, col7, col8 = st.columns(4)
-    with col5:
-        st.metric("🎯 Cumplimiento Tradicional", f"{cumplimiento_tradicional:.1f}%")
-    with col6:
         st.metric("🚀 CUMPLIMIENTO REAL", f"{cumplimiento_real:.1f}%", 
                  delta=f"{(cumplimiento_real - cumplimiento_tradicional):.1f}% vs Tradicional",
                  delta_color="normal")
-    with col7:
-        st.metric("📋 Visitas en Tiempo", visita_en_tiempo, f"{(visita_en_tiempo/total_pedidos*100):.1f}%")
-    with col8:
+        st.metric("💡 Tasa Resolución", f"{tasa_resolucion:.1f}%")
         st.metric("📊 Efectividad Visitas", f"{efectividad_visitas:.1f}%")
 
-    # Tercera línea con indicadores adicionales
-    col9, col10, col11, col12 = st.columns(4)
-    with col9:
-        st.metric("📈 Cumplimiento Gestión", f"{cumplimiento_gestion:.1f}%")
-    with col10:
-        st.metric("💡 Tasa Resolución", f"{tasa_resolucion:.1f}%")
-    with col11:
+    # Columna 3: Devueltos y Visitas
+    with col3:
+        st.metric("🔄 Devueltos", devueltos, f"{(devueltos/total_pedidos*100):.1f}%")
+        st.metric("📋 Visitas en Tiempo", visita_en_tiempo, f"{(visita_en_tiempo/total_pedidos*100):.1f}%")
         st.metric("📍 Visitas Fuera Tiempo", visita_fuera_tiempo)
-    with col12:
-        st.metric("⚠️ Pendientes Críticos", pendiente_fuera_tiempo)
+        st.metric("📈 Total Alertas", len(df[df['Prioridad Alerta'] != ""]))
 
-    # Cuarta línea con indicadores de calidad
+    # Columna 4: Pendientes y Críticos
+    with col4:
+        st.metric("⏳ Pendientes", pendientes_reales, f"{(pendientes_reales/total_pedidos*100):.1f}%")
+        st.metric("⚠️ Pendientes Críticos", pendiente_fuera_tiempo)
+        st.metric("❌ Tasa Rechazo/Ausencia", f"{tasa_rechazo_ausencia:.1f}%")
+        st.metric("📦 Pedidos/Visita", f"{pedidos_por_visita:.2f}")
+        
+    # Columna 5: Canceladas y Alertas Creada
+    with col5:
+        st.metric("❌ Canceladas", canceladas, f"{(canceladas/df.shape[0]*100):.1f}%")
+        st.metric("🚨 Creadas Demoradas (>24h)", alertas_creada_criticas)
+        st.metric("⚠️ Creadas Próximas a Vencer", alertas_creada_preventivas)
+        
 
     # --- EXPLICACIÓN DEL CUMPLIMIENTO REAL ---
     st.info(f"""
@@ -692,13 +1391,14 @@ if uploaded_file is not None:
     st.header("📈 Detalle de Estados")
     resumen_data = {
         "Categoría": [
-            "TOTAL PEDIDOS",
+            "TOTAL PEDIDOS (Excl. Canceladas)",
             "ENTREGADOS",
             " - En Tiempo",
             " - En Tiempo (PD)",
             " - Fuera de Tiempo", 
             " - Fuera de Tiempo (PD)",
             "DEVUELTOS",
+            "CANCELADAS",
             "PENDIENTES CON VISITA",
             " - Visita en Tiempo",
             " - Visita Fuera de Tiempo",
@@ -715,6 +1415,7 @@ if uploaded_file is not None:
             fuera_tiempo,
             fuera_tiempo_pd,
             devuelto_count,
+            canceladas,
             visita_en_tiempo + visita_fuera_tiempo,
             visita_en_tiempo,
             visita_fuera_tiempo,
@@ -731,6 +1432,7 @@ if uploaded_file is not None:
             f"{(fuera_tiempo/total_pedidos*100):.1f}%",
             f"{(fuera_tiempo_pd/total_pedidos*100):.1f}%",
             f"{(devuelto_count/total_pedidos*100):.1f}%",
+            f"{(canceladas/df.shape[0]*100):.1f}%",
             f"{((visita_en_tiempo + visita_fuera_tiempo)/total_pedidos*100):.1f}%",
             f"{(visita_en_tiempo/total_pedidos*100):.1f}%",
             f"{(visita_fuera_tiempo/total_pedidos*100):.1f}%",
@@ -750,6 +1452,7 @@ if uploaded_file is not None:
         "Entregada - Fuera de Tiempo", 
         "Entregada - Fuera de Tiempo (PD)",
         "Devuelto",
+        "Cancelada",
         "Pendiente - Visita en Tiempo",
         "Pendiente - Visita Fuera de Tiempo",
         "Pendiente - En Tiempo", 
@@ -762,6 +1465,7 @@ if uploaded_file is not None:
         fuera_tiempo,
         fuera_tiempo_pd,
         devuelto_count,
+        canceladas,
         visita_en_tiempo,
         visita_fuera_tiempo,
         pendiente_en_tiempo, 
@@ -771,7 +1475,7 @@ if uploaded_file is not None:
     fig1 = px.pie(
         names=categorias_mejoradas,
         values=valores_mejorados,
-        title="Distribución de Cumplimiento Mejorado (Incluyendo Visitas)",
+        title="Distribución de Cumplimiento Mejorado (Incluyendo Visitas y Canceladas)",
         color=categorias_mejoradas,
         color_discrete_map={
             "Entregada - En Tiempo": "#28a745",
@@ -779,6 +1483,7 @@ if uploaded_file is not None:
             "Entregada - Fuera de Tiempo": "#dc3545",
             "Entregada - Fuera de Tiempo (PD)": "#e74c3c",
             "Devuelto": "#9b59b6",
+            "Cancelada": "#95a5a6",
             "Pendiente - Visita en Tiempo": "#3498db",
             "Pendiente - Visita Fuera de Tiempo": "#e67e22",
             "Pendiente - En Tiempo": "#ffc107",
@@ -798,7 +1503,7 @@ if uploaded_file is not None:
         "Descripción": [
             "Solo entregas en tiempo",
             "Entregas + Visitas en tiempo", 
-            "Gestión total (excluye devoluciones)"
+            "Gestión total (excluye devoluciones y canceladas)"
         ]
     }
     df_comparativa = pd.DataFrame(indicadores_comparativa)
@@ -831,13 +1536,22 @@ if uploaded_file is not None:
         return grupo[grupo['Cumplimiento'].str.contains("Visita en Tiempo", na=False)].shape[0]
 
     # Agrupar y aplicar funciones
-    df_cliente = df.groupby('Cliente').agg(
+    df_cliente = df[df['Cumplimiento'] != "Cancelada"].groupby('Cliente').agg(
         Total_Pedidos=('Guia', 'count'),
         Entregas_En_Tiempo=('Cumplimiento', lambda x: calcular_entregas_en_tiempo(x.to_frame().assign(Cumplimiento=x))),
         Visitas_En_Tiempo=('Cumplimiento', lambda x: calcular_visitas_en_tiempo(x.to_frame().assign(Cumplimiento=x)))
     ).reset_index()
 
-    df_cliente['Cumplimiento_Real'] = ((df_cliente['Entregas_En_Tiempo'] + df_cliente['Visitas_En_Tiempo']) / df_cliente['Total_Pedidos'] * 100).round(2)
+    # --- CORRECCIÓN: Asegurar que las columnas son numéricas ---
+    df_cliente['Total_Pedidos'] = pd.to_numeric(df_cliente['Total_Pedidos'], errors='coerce').fillna(0)
+    df_cliente['Entregas_En_Tiempo'] = pd.to_numeric(df_cliente['Entregas_En_Tiempo'], errors='coerce').fillna(0)
+    df_cliente['Visitas_En_Tiempo'] = pd.to_numeric(df_cliente['Visitas_En_Tiempo'], errors='coerce').fillna(0)
+
+    # Ahora sí, calcular el cumplimiento real
+    df_cliente['Cumplimiento_Real'] = ((df_cliente['Entregas_En_Tiempo'] + df_cliente['Visitas_En_Tiempo']) / df_cliente['Total_Pedidos'].replace(0, 1) * 100).round(2)
+
+    # Evitar valores infinitos o NaN
+    df_cliente['Cumplimiento_Real'] = df_cliente['Cumplimiento_Real'].replace([np.inf, -np.inf], 0).fillna(0)
 
     # Filtrar clientes con al menos 5 pedidos para evitar ruido
     df_cliente = df_cliente[df_cliente['Total_Pedidos'] >= 5]
@@ -860,13 +1574,19 @@ if uploaded_file is not None:
     st.header("🗺️ Cumplimiento Real por Zona (AMBA vs INTERIOR)")
 
     # Reutilizamos las mismas funciones auxiliares
-    df_zona = df.groupby('ZONA').agg(
+    df_zona = df[df['Cumplimiento'] != "Cancelada"].groupby('ZONA').agg(
         Total_Pedidos=('Guia', 'count'),
         Entregas_En_Tiempo=('Cumplimiento', lambda x: calcular_entregas_en_tiempo(x.to_frame().assign(Cumplimiento=x))),
         Visitas_En_Tiempo=('Cumplimiento', lambda x: calcular_visitas_en_tiempo(x.to_frame().assign(Cumplimiento=x)))
     ).reset_index()
 
-    df_zona['Cumplimiento_Real'] = ((df_zona['Entregas_En_Tiempo'] + df_zona['Visitas_En_Tiempo']) / df_zona['Total_Pedidos'] * 100).round(2)
+    # --- CORRECCIÓN: Asegurar que las columnas son numéricas ---
+    df_zona['Total_Pedidos'] = pd.to_numeric(df_zona['Total_Pedidos'], errors='coerce').fillna(0)
+    df_zona['Entregas_En_Tiempo'] = pd.to_numeric(df_zona['Entregas_En_Tiempo'], errors='coerce').fillna(0)
+    df_zona['Visitas_En_Tiempo'] = pd.to_numeric(df_zona['Visitas_En_Tiempo'], errors='coerce').fillna(0)
+
+    df_zona['Cumplimiento_Real'] = ((df_zona['Entregas_En_Tiempo'] + df_zona['Visitas_En_Tiempo']) / df_zona['Total_Pedidos'].replace(0, 1) * 100).round(2)
+    df_zona['Cumplimiento_Real'] = df_zona['Cumplimiento_Real'].replace([np.inf, -np.inf], 0).fillna(0)
 
     fig_zona = px.bar(
         df_zona,
@@ -880,50 +1600,95 @@ if uploaded_file is not None:
     fig_zona.update_traces(texttemplate='%{y:.1f}%', textposition='outside')
     st.plotly_chart(fig_zona, use_container_width=True)
 
+    # --- NUEVO GRÁFICO: TOP 5 AGENCIAS CON MÁS CANCELACIONES ---
+    if canceladas > 0:
+        st.header("📉 Top 5 Agencias Origen con Más Cancelaciones")
+        top_agencias_cancel = df[df['Cumplimiento'] == "Cancelada"]['Agencia origen'].value_counts().head(5)
+        fig_cancel = px.bar(
+            top_agencias_cancel,
+            x=top_agencias_cancel.values,
+            y=top_agencias_cancel.index,
+            orientation='h',
+            text=top_agencias_cancel.values,
+            title="Top 5 Agencias Origen con Más Cancelaciones",
+            color=top_agencias_cancel.values,
+            color_continuous_scale='Blues'
+        )
+        fig_cancel.update_traces(texttemplate='%{text}', textposition='outside')
+        fig_cancel.update_layout(yaxis={'categoryorder':'total ascending'})
+        st.plotly_chart(fig_cancel, use_container_width=True)
+
+    # --- NUEVO GRÁFICO: TOP 5 LOCALIDADES CON MÁS PEDIDOS FUERA DE TIEMPO ---
+    st.header("⏳ Top 5 Localidades (Loc) con Más Pedidos Fuera de Tiempo")
+    top_loc_fuera_tiempo = df[df['Cumplimiento'] == "Pendiente - Fuera de Tiempo"]['Loc'].value_counts().head(5)
+    fig_loc = px.bar(
+        top_loc_fuera_tiempo,
+        x=top_loc_fuera_tiempo.values,
+        y=top_loc_fuera_tiempo.index,
+        orientation='h',
+        text=top_loc_fuera_tiempo.values,
+        title="Top 5 Localidades con Más Pedidos Fuera de Tiempo",
+        color=top_loc_fuera_tiempo.values,
+        color_continuous_scale='Reds'
+    )
+    fig_loc.update_traces(texttemplate='%{text}', textposition='outside')
+    fig_loc.update_layout(yaxis={'categoryorder':'total ascending'})
+    st.plotly_chart(fig_loc, use_container_width=True)
+
+    # --- NUEVA SECCIÓN: ALERTAS DE ESTADO "CREADA" DEMORADO ---
+    alertas_creada_demorada = df[df['Alerta Creada Demorada'] != ""]
+    if not alertas_creada_demorada.empty:
+        st.header("🚨 Alertas de Estado 'Creada' Demorado")
+        st.write("Los siguientes pedidos están en estado 'Creada' por más de 24 horas:")
+        
+        columnas_alerta = [
+            'Guia','Importe total', 'Cliente', 'Destinatario', 'Loc', 'ZONA', 
+            'Fecha', 'Fecha último estado', 'Estado', 
+            'Alerta Creada Demorada', 'Prioridad Alerta'
+        ]
+        
+        # Filtrar columnas existentes
+        columnas_existentes = [col for col in columnas_alerta if col in df.columns]
+        df_alerta = alertas_creada_demorada[columnas_existentes]
+        
+        # Mostrar tabla
+        st.dataframe(df_alerta)
+        
+        # Botón de descarga
+        excel_data = generar_excel_desde_df(df_alerta, "Alertas Creada Demorada")
+        st.download_button(
+            label="📥 Descargar Alertas de Estado 'Creada' Demorado (Excel)",
+            data=excel_data,
+            file_name="Alertas_Creada_Demorada.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+
     # --- NUEVAS ALERTAS MEJORADAS EN LA INTERFAZ ---
-    # Alertas de seguimiento de visitas
-    alertas_seguimiento = df[df['Alerta Seguimiento Visita'] != ""]
+    # Alertas de seguimiento de visitas (2+ visitas)
+    alertas_seguimiento = df[df['Alerta Seguimiento Visitas'] != ""]
     if not alertas_seguimiento.empty:
-        st.header("🔔 Alertas de Seguimiento de Visitas")
-        st.write("Pedidos con visita en tiempo que requieren acción:")
-        columnas_alerta = ['Guia', 'Cliente', 'Destinatario', 'Loc','ZONA', 'Estado', 'Visitas', 
-                          'Fecha último estado', 'Cumplimiento', 'Alerta Seguimiento Visita', 'Prioridad Alerta']
+        st.header("🔄 Alertas de Seguimiento de Visitas (2+ Visitas)")
+        st.write("Pedidos con múltiples visitas que requieren acción:")
+        columnas_alerta = ['Guia','Importe total', 'Cliente', 'Destinatario', 'Tel Destinatario', 'Loc', 'ZONA', 'Estado', 'Visitas', 
+                          'Fecha último estado', 'Cumplimiento', 'Alerta Seguimiento Visitas', 'Prioridad Alerta']
         # Filtrar columnas existentes
         columnas_existentes = [col for col in columnas_alerta if col in df.columns]
         df_alerta = alertas_seguimiento[columnas_existentes]
         st.dataframe(df_alerta)
-        excel_data = generar_excel_desde_df(df_alerta, "Alertas Seguimiento")
+        excel_data = generar_excel_desde_df(df_alerta, "Alertas Seguimiento Visitas")
         st.download_button(
-            label="📥 Descargar Alertas de Seguimiento (Excel)",
+            label="📥 Descargar Alertas de Seguimiento de Visitas (Excel)",
             data=excel_data,
             file_name="Alertas_Seguimiento_Visitas.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
 
-    # Alertas de visitas múltiples
-    alertas_multiples = df[df['Alerta Visitas Múltiples'] != ""]
-    if not alertas_multiples.empty:
-        st.header("🔄 Alertas de Visitas Múltiples")
-        st.write("Pedidos con múltiples visitas sin éxito:")
-        columnas_alerta = ['Guia', 'Cliente', 'Destinatario', 'Loc','ZONA', 'Estado', 'Visitas', 
-                          'Fecha último estado', 'Alerta Visitas Múltiples', 'Prioridad Alerta']
-        columnas_existentes = [col for col in columnas_alerta if col in df.columns]
-        df_alerta = alertas_multiples[columnas_existentes]
-        st.dataframe(df_alerta)
-        excel_data = generar_excel_desde_df(df_alerta, "Alertas Visitas Múltiples")
-        st.download_button(
-            label="📥 Descargar Alertas Visitas Múltiples (Excel)",
-            data=excel_data,
-            file_name="Alertas_Visitas_Multiples.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
-
-    # --- NUEVA ALERTA: UNA VISITA SIN SEGUIMIENTO ---
+    # --- NUEVA ALERTA: UNA SOLA VISITA SIN SEGUIMIENTO ---
     alertas_una_visita = df[df['Alerta Una Visita Sin Seguimiento'] != ""]
     if not alertas_una_visita.empty:
         st.header("⏰ Alertas de Una Visita Sin Seguimiento")
         st.write("Pedidos con solo una visita que no han tenido seguimiento en 5+ días hábiles:")
-        columnas_alerta = ['Guia', 'Cliente', 'Destinatario', 'Loc','ZONA', 'Estado', 'Visitas', 
+        columnas_alerta = ['Guia','Importe total', 'Cliente', 'Destinatario', 'Tel Destinatario', 'Loc', 'ZONA', 'Estado', 'Visitas', 
                           'Fecha último estado', 'Cumplimiento', 'Alerta Una Visita Sin Seguimiento', 'Prioridad Alerta']
         columnas_existentes = [col for col in columnas_alerta if col in df.columns]
         df_alerta = alertas_una_visita[columnas_existentes]
@@ -941,7 +1706,8 @@ if uploaded_file is not None:
     if not alertas_devolucion.empty:
         st.header("🚨 Alertas de Devolución")
         st.write("Los siguientes pedidos están en estado 'Esperando retiro' por más de 15 días hábiles:")
-        columnas_alerta = ['Guia', 'Cliente', 'Destinatario', 'Loc','ZONA', 'Fecha último estado', 'Alerta Devolución', 'Prioridad Alerta']
+        columnas_alerta = ['Guia','Importe total', 'Cliente', 'Destinatario', 'Tel Destinatario', 'Loc', 'ZONA', 'Fecha último estado', 'Estado'
+                           , 'Alerta Devolución', 'Prioridad Alerta']
         columnas_existentes = [col for col in columnas_alerta if col in df.columns]
         df_alerta = alertas_devolucion[columnas_existentes]
         st.dataframe(df_alerta)
@@ -958,7 +1724,7 @@ if uploaded_file is not None:
     if not alertas_redespacho.empty:
         st.header("🚨 Alertas de Redespacho Demorado")
         st.write("Los siguientes pedidos están en estado 'Redespacho' por más de 48 horas hábiles:")
-        columnas_alerta = ['Guia', 'Cliente', 'Destinatario', 'Loc','ZONA', 'Fecha último estado', 'Alerta Redespacho', 'Prioridad Alerta']
+        columnas_alerta = ['Guia','Importe total', 'Cliente', 'Destinatario', 'Tel Destinatario', 'Loc', 'ZONA', 'Fecha último estado', 'Estado', 'Alerta Redespacho', 'Prioridad Alerta']
         columnas_existentes = [col for col in columnas_alerta if col in df.columns]
         df_alerta = alertas_redespacho[columnas_existentes]
         st.dataframe(df_alerta)
@@ -970,12 +1736,31 @@ if uploaded_file is not None:
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
 
+    # --- NUEVA ALERTA: REPROGRAMADA SIN VISITAS ---
+    alertas_reprogramada_sin_visitas = df[df['Alerta Reprogramada Sin Visitas'] != ""]
+    if not alertas_reprogramada_sin_visitas.empty:
+        st.header("🚨 Alertas de Reprogramada Sin Visitas")
+        st.write("Pedidos en estado 'Reprogramada' que no tienen visitas registradas:")
+        columnas_alerta = ['Guia','Importe total', 'Cliente', 'Destinatario', 'Tel Destinatario', 'Loc', 'ZONA', 
+        'Estado', 'Visitas', 'Fecha último estado', 'Cumplimiento', 
+        'Alerta Reprogramada Sin Visitas', 'Prioridad Alerta']
+        columnas_existentes = [col for col in columnas_alerta if col in df.columns]
+        df_alerta = alertas_reprogramada_sin_visitas[columnas_existentes]
+        st.dataframe(df_alerta)
+        excel_data = generar_excel_desde_df(df_alerta, "Alertas Reprogramada Sin Visitas")
+        st.download_button(
+            label="📥 Descargar Alertas Reprogramada Sin Visitas (Excel)",
+            data=excel_data,
+            file_name="Alertas_Reprogramada_Sin_Visitas.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )    
+
     # Alertas de En Tránsito Demorado
     alertas_en_transito = df[df['Alerta En Tránsito Demorado'] != ""]
     if not alertas_en_transito.empty:
         st.header("🚨 Alertas de En Tránsito Demorado")
         st.write("Los siguientes pedidos están en estado 'En tránsito' por más de 48 horas hábiles:")
-        columnas_alerta = ['Guia', 'Cliente', 'Destinatario', 'Loc','ZONA', 'Fecha último estado', 'Alerta En Tránsito Demorado', 'Prioridad Alerta']
+        columnas_alerta = ['Guia','Importe total', 'Cliente', 'Destinatario', 'Tel Destinatario', 'Loc', 'ZONA', 'Fecha último estado', 'Estado', 'Alerta En Tránsito Demorado', 'Prioridad Alerta']
         columnas_existentes = [col for col in columnas_alerta if col in df.columns]
         df_alerta = alertas_en_transito[columnas_existentes]
         st.dataframe(df_alerta)
@@ -985,14 +1770,14 @@ if uploaded_file is not None:
             data=excel_data,
             file_name="Alertas_En_Transito_Demorado.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )    
+        )     
 
     # Alertas de pendiente fuera de tiempo
     alertas_pendiente_fuera_tiempo = df[df['Alerta Pendiente Fuera Tiempo'] == "Fuera de tiempo crítico"]
     if not alertas_pendiente_fuera_tiempo.empty:
         st.header("🚨 Alertas de Pendiente Fuera de Tiempo")
         st.write("Los siguientes pedidos están pendientes y fuera del tiempo de entrega prometido:")
-        columnas_alerta = ['Guia', 'Cliente', 'Destinatario', 'Loc','ZONA', 'Fecha último estado', 'Días Prometidos', 'Lead Time', 'Alerta Pendiente Fuera Tiempo', 'Prioridad Alerta']
+        columnas_alerta = ['Guia','Importe total', 'Cliente', 'Destinatario', 'Tel Destinatario', 'Loc', 'ZONA', 'Fecha último estado', 'Estado', 'Días Prometidos', 'Lead Time', 'Alerta Pendiente Fuera Tiempo', 'Prioridad Alerta']
         columnas_existentes = [col for col in columnas_alerta if col in df.columns]
         df_alerta = alertas_pendiente_fuera_tiempo[columnas_existentes]
         st.dataframe(df_alerta)
@@ -1009,7 +1794,7 @@ if uploaded_file is not None:
     if not alertas_pago_pendiente.empty:
         st.header("🚨 Alertas de Pago Pendiente Demorado")
         st.write("Los siguientes pedidos están en estado 'Esperando retiro' con condición de venta PD por más de 5 días hábiles:")
-        columnas_alerta = ['Guia', 'Cliente', 'Destinatario', 'Loc','ZONA', 'Fecha último estado', 'Condición de venta', 'Alerta Pago Pendiente', 'Prioridad Alerta']
+        columnas_alerta = ['Guia','Importe total', 'Cliente', 'Destinatario', 'Tel Destinatario', 'Loc', 'ZONA', 'Fecha último estado', 'Estado', 'Condición de venta', 'Alerta Pago Pendiente', 'Prioridad Alerta']
         columnas_existentes = [col for col in columnas_alerta if col in df.columns]
         df_alerta = alertas_pago_pendiente[columnas_existentes]
         st.dataframe(df_alerta)
@@ -1021,27 +1806,32 @@ if uploaded_file is not None:
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
 
-    # --- DESCARGA COMBINADA DE TODAS LAS ALERTAS ---
+    # --- DESCARGA COMBINADA DE TODAS LAS ALERTAS (ACTUALIZADA) ---
     st.header("📥 Descarga Combinada de Todas las Alertas")
     todas_alertas = df[
-        (df['Alerta Seguimiento Visita'] != "") |
-        (df['Alerta Visitas Múltiples'] != "") |
+        (df['Alerta Seguimiento Visitas'] != "") |
         (df['Alerta Una Visita Sin Seguimiento'] != "") |
         (df['Alerta Devolución'] == "Sugerir devolución") |
         (df['Alerta Redespacho'] == "Redespacho demorado") |
         (df['Alerta Pendiente Fuera Tiempo'] == "Fuera de tiempo crítico") |
-        (df['Alerta Pago Pendiente'] == "Pago pendiente demorado")
+        (df['Alerta Pago Pendiente'] == "Pago pendiente demorado") |
+        (df['Alerta En Tránsito Demorado'] != "") |
+        (df['Alerta Creada Demorada'] != "")  # Nueva alerta agregada
     ]
     if not todas_alertas.empty:
-        columnas_todas = ['Guia', 'Cliente', 'Destinatario', 'Loc','ZONA', 'Estado', 'Visitas', 'Fecha último estado', 
-                          'Cumplimiento', 'Prioridad Alerta',
-                          'Alerta Seguimiento Visita', 'Alerta Visitas Múltiples', 
-                          'Alerta Una Visita Sin Seguimiento', 'Alerta Devolución', 'Alerta Redespacho', 
-                          'Alerta Pendiente Fuera Tiempo', 'Alerta Pago Pendiente']
+        columnas_todas = [
+            'Guia','Importe total', 'Cliente', 'Destinatario', 'Tel Destinatario', 'Loc', 'ZONA', 'Visitas', 'Fecha último estado', 'Estado', 'Cumplimiento', 'Prioridad Alerta',
+            'Alerta Seguimiento Visitas', 'Alerta Una Visita Sin Seguimiento', 
+            'Alerta Devolución', 'Alerta Redespacho', 
+            'Alerta Pendiente Fuera Tiempo', 'Alerta Pago Pendiente', 
+            'Alerta En Tránsito Demorado', 'Alerta Creada Demorada'  # Nueva columna
+        ]
+        
         # Filtrar columnas que existen en el DataFrame
         columnas_existentes = [col for col in columnas_todas if col in df.columns]
         df_todas = todas_alertas[columnas_existentes]
         st.dataframe(df_todas)
+        
         excel_todas = generar_excel_desde_df(df_todas, "Todas las Alertas")
         st.download_button(
             label="📥 Descargar Todas las Alertas (Excel)",
@@ -1052,57 +1842,90 @@ if uploaded_file is not None:
     else:
         st.info("✅ No hay alertas activas en este momento.")
 
-    # --- DESCARGAS GENERALES ---
-    st.header("📥 Descargas Generales")
-    # Preparar Excel con gráficos
-    output_excel = io.BytesIO()
-    # Crear datos para el gráfico de estadísticas
+    # --- ACTUALIZAR LA VISTA PREVIA ---
+    st.header("🔍 Vista Previa de Datos con Alertas de Variación")
+
+    columnas_mostrar = [
+        'Cliente', 'Subcuenta', 'Agencia origen', 'Agencia destino', 'Condición de venta',
+        'Fecha', 'Semana Calendario', 'Porcentaje Cumplimiento Semana', 
+        'Alerta Variación Semana', 'Variación vs Semana Anterior',  # Nuevas columnas
+        'Fecha último estado', 'Estado', 'Visitas', 'ED', 'Loc', 'ZONA', 'Producto',
+        'Lead Time', 'Días Prometidos', 'Día de Gracia Aplicado',
+        'Cumplimiento', 'Días Restantes', 'Prioridad Alerta',
+        'Alerta Seguimiento Visitas', 'Alerta Una Visita Sin Seguimiento',
+        'Alerta Devolución', 'Alerta Redespacho', 'Alerta Pendiente Fuera Tiempo', 
+        'Alerta Pago Pendiente', 'Alerta En Tránsito Demorado', 'Alerta Creada Demorada'
+    ]
+
+    columnas_existentes = [col for col in columnas_mostrar if col in df.columns]
+    df_vista_previa = df[columnas_existentes].head(10)
+    st.dataframe(df_vista_previa)
+
+    # --- DESCARGAS GENERALES ACTUALIZADAS ---
+    st.header("📥 Descargas Generales Actualizadas")
+    
+    # Preparar datos para el Excel de estadísticas
     stats_data = {
         "Métrica": [
-            "Total Pedidos", "Entregados", "Devueltos", "Pendientes Reales",
+            "Total Pedidos", "Entregados", "Devueltos", "Canceladas", "Pendientes Reales",
             "Entregada - En Tiempo", "Entregada - En Tiempo (PD)",
             "Entregada - Fuera de Tiempo", "Entregada - Fuera de Tiempo (PD)",
-            "Devuelto",
+            "Devuelto", "Cancelada",
             "Pendiente - Visita en Tiempo", "Pendiente - Visita Fuera de Tiempo",
             "Pendiente - En Tiempo", "Pendiente - Último Día",
             "Pendiente - Fuera de Tiempo",
             "% Cumplimiento Tradicional", "% Cumplimiento Real", "% Cumplimiento Gestión",
-            "FADR (%)", "Pedidos por Visita", "Tasa Rechazo/Ausencia (%)"
+            "FADR (%)", "Pedidos por Visita", "Tasa Rechazo/Ausencia (%)",
+            "Alertas Creada Demoradas", "Alertas Creada Próximas a Vencer"
         ],
         "Valor": [
-            total_pedidos, entregados, devueltos, pendientes_reales,
+            total_pedidos, entregados, devueltos, canceladas, pendientes_reales,
             en_tiempo, en_tiempo_pd,
             fuera_tiempo, fuera_tiempo_pd,
-            devuelto_count,
+            devuelto_count, canceladas,
             visita_en_tiempo, visita_fuera_tiempo,
             pendiente_en_tiempo, pendiente_ultimo_dia,
             pendiente_fuera_tiempo,
             f"{cumplimiento_tradicional:.2f}%", f"{cumplimiento_real:.2f}%", f"{cumplimiento_gestion:.2f}%",
-            f"{fadr:.2f}%", f"{pedidos_por_visita:.2f}", f"{tasa_rechazo_ausencia:.2f}%"
+            f"{fadr:.2f}%", f"{pedidos_por_visita:.2f}", f"{tasa_rechazo_ausencia:.2f}%",
+            alertas_creada_criticas, alertas_creada_preventivas
         ]
     }
+    
     if len(stats_data["Métrica"]) == len(stats_data["Valor"]):
         stats_df = pd.DataFrame(stats_data)
     else:
         st.error("❌ Error: Las listas de estadísticas tienen longitudes diferentes")
         stats_df = pd.DataFrame({"Métrica": ["Error en estadísticas"], "Valor": ["Contactar al administrador"]})
 
-    # Guardar en Excel
-    with pd.ExcelWriter(output_excel, engine='openpyxl') as writer:
-        df.to_excel(writer, sheet_name="Base", index=False)
+    # Guardar en Excel actualizado
+    output_excel_actualizado = io.BytesIO()
+    with pd.ExcelWriter(output_excel_actualizado, engine='openpyxl') as writer:
+        df.to_excel(writer, sheet_name="Base Completa", index=False)
+        df_semana.to_excel(writer, sheet_name="Cumplimiento por Semana", index=False)
         stats_df.to_excel(writer, sheet_name="Estadísticas", index=False)
-    output_excel.seek(0)
+    output_excel_actualizado.seek(0)
 
     col_btn1, col_btn2 = st.columns(2)
     with col_btn1:
         st.download_button(
             label="📥 Descargar Excel Actualizado (Completo)",
-            data=output_excel,
-            file_name="Reporte_LeadTime_Actualizado.xlsx",
+            data=output_excel_actualizado,
+            file_name="Reporte_LeadTime_Con_Porcentaje_Semana.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
 
-    # --- GENERAR POWERPOINT (SIMPLIFICADO) ---
+    # También actualizar la descarga de la vista previa
+    excel_vista_actualizada = generar_excel_desde_df(df[columnas_existentes], "Vista Previa Completa")
+    with col_btn2:
+        st.download_button(
+            label="📥 Descargar Vista Previa Actualizada",
+            data=excel_vista_actualizada,
+            file_name="Vista_Previa_Actualizada.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+
+    # --- GENERAR POWERPOINT (ACTUALIZADO) ---
     def crear_pptx():
         prs = Presentation()
         # Slide 1: Título
@@ -1126,66 +1949,57 @@ if uploaded_file is not None:
         p.font.bold = True
         p.font.size = Pt(20)
         metrics = [
-            f"• Total de pedidos: {total_pedidos}",
+            f"• Total de pedidos (Excl. Canceladas): {total_pedidos}",
             f"• Entregados: {entregados} ({(entregados/total_pedidos*100):.1f}%)",
             f"• Devueltos: {devueltos} ({(devueltos/total_pedidos*100):.1f}%)",
+            f"• Canceladas: {canceladas}",
             f"• Cumplimiento Tradicional: {cumplimiento_tradicional:.1f}%",
             f"• Cumplimiento Real: {cumplimiento_real:.1f}%",
             f"• Cumplimiento Gestión: {cumplimiento_gestion:.1f}%",
             f"• FADR (1er Intento): {fadr:.1f}%",
             f"• Visitas en Tiempo: {visita_en_tiempo}",
-            f"• Alertas Activas: {len(todas_alertas) if 'todas_alertas' in locals() else 0}"
+            f"• Alertas Activas: {len(todas_alertas) if 'todas_alertas' in locals() else 0}",
+            f"• Alertas Creada Demoradas: {alertas_creada_criticas}"
         ]
         for metric in metrics:
             p = tf.add_paragraph()
             p.text = metric
             p.font.size = Pt(16)
 
+        # Slide 3: Cumplimiento por Semana
+        slide_layout = prs.slide_layouts[1]
+        slide = prs.slides.add_slide(slide_layout)
+        title = slide.shapes.title
+        title.text = "Cumplimiento por Semana"
+        content = slide.placeholders[1]
+        tf = content.text_frame
+        tf.clear()
+        p = tf.paragraphs[0]
+        p.text = "Evolución Semanal:"
+        p.font.bold = True
+        p.font.size = Pt(18)
+        
+        # Agregar las últimas 4 semanas
+        if len(df_semana) > 0:
+            ultimas_semanas = df_semana.tail(4)
+            for _, semana in ultimas_semanas.iterrows():
+                p = tf.add_paragraph()
+                p.text = f"Semana {semana['Semana Calendario']}: {semana['Porcentaje Cumplimiento']:.1f}% - {semana['Alerta Variación']}"
+                p.font.size = Pt(14)
+
         pptx_buffer = io.BytesIO()
         prs.save(pptx_buffer)
         pptx_buffer.seek(0)
         return pptx_buffer
 
-    with col_btn2:
-        if st.button("📊 Generar y Descargar PowerPoint"):
-            pptx_data = crear_pptx()
-            st.download_button(
-                label="⬇️ Descargar Presentación PPTX",
-                data=pptx_data,
-                file_name="Reporte_LeadTime_Presentacion.pptx",
-                mime="application/vnd.openxmlformats-officedocument.presentationml.presentation"
-            )
-
-    # --- VISTA PREVIA DE DATOS ---
-    st.header("🔍 Vista Previa de Datos (primeras 10 filas)")
-    columnas_mostrar = [
-        'Cliente', 'Subcuenta', 'Agencia origen', 'Agencia destino', 'Condición de venta',
-        'Fecha', 'Fecha último estado', 'Estado', 'Visitas', 'ED', 'ZONA', 'Loc', 'Producto',
-        'Lead Time', 'Días Prometidos', 'Día de Gracia Aplicado',
-        'Cumplimiento', 'Días Restantes', 'Prioridad Alerta',
-        'Alerta Seguimiento Visita', 'Alerta Visitas Múltiples', 'Alerta Una Visita Sin Seguimiento',
-        'Alerta Devolución', 'Alerta Redespacho', 'Alerta Pendiente Fuera Tiempo', 'Alerta Pago Pendiente'
-    ]
-    # Mostrar solo las columnas que existen en el DataFrame
-    columnas_existentes = [col for col in columnas_mostrar if col in df.columns]
-    df_vista_previa = df[columnas_existentes].head(10)
-    st.dataframe(df_vista_previa)
-
-    # Botón para descargar vista previa completa en Excel
-    excel_vista = generar_excel_desde_df(df[columnas_existentes], "Vista Previa Completa")
-    st.download_button(
-        label="📥 Descargar Vista Previa Completa (Excel)",
-        data=excel_vista,
-        file_name="Vista_Previa_Datos.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
-
-    # --- PRUEBA RÁPIDA EN SIDEBAR ---
-    st.sidebar.markdown("### 🧪 Prueba de Clasificación")
-    prueba_localidad = st.sidebar.text_input("Ingresa localidad para probar:", "VICENTE LOPEZ, BUENOS AIRES")
-    if prueba_localidad:
-        zona = determinar_zona(prueba_localidad)
-        st.sidebar.success(f"Clasificación: **{zona}**")
+    if st.button("📊 Generar y Descargar PowerPoint Actualizado"):
+        pptx_data = crear_pptx()
+        st.download_button(
+            label="⬇️ Descargar Presentación PPTX Actualizada",
+            data=pptx_data,
+            file_name="Reporte_LeadTime_Presentacion_Actualizada.pptx",
+            mime="application/vnd.openxmlformats-officedocument.presentationml.presentation"
+        )
 
 else:
     st.info("👆 Por favor, sube un archivo Excel para comenzar.")
