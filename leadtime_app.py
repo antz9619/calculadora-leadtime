@@ -657,8 +657,9 @@ if uploaded_file is not None:
     df['Orden Prioridad'] = df['Prioridad Alerta'].map(prioridad_orden).fillna(999)
     df = df.sort_values('Orden Prioridad').reset_index(drop=True)
 
-    # --- FILTROS ---
+    # --- FILTROS MEJORADOS CON DEPENDENCIA ---
     st.sidebar.header("🔍 Filtros")
+
     # Filtro por Cliente
     if 'Cliente' in df.columns:
         clientes = sorted(df['Cliente'].dropna().unique())
@@ -667,59 +668,72 @@ if uploaded_file is not None:
         st.error("❌ La columna 'Cliente' no existe en el archivo.")
         st.stop()
 
-    # Filtro por Subcuenta
-    if 'Subcuenta' in df.columns:
-        subcuentas = sorted(df['Subcuenta'].dropna().unique())
+    # Crear DataFrame temporal para filtros dependientes
+    df_filtrado = df.copy()
+
+    # Aplicar filtro de cliente primero (si se seleccionó)
+    if cliente_seleccionado != "Todos":
+        df_filtrado = df_filtrado[df_filtrado['Cliente'] == cliente_seleccionado]
+
+    # Filtro por Subcuenta (DEPENDE del cliente seleccionado)
+    if 'Subcuenta' in df_filtrado.columns:
+        # Usar df_filtrado en lugar de df
+        subcuentas = sorted(df_filtrado['Subcuenta'].dropna().unique())
         subcuenta_seleccionada = st.sidebar.selectbox("Subcuenta", ["Todas"] + subcuentas)
     else:
         st.error("❌ La columna 'Subcuenta' no existe en el archivo.")
         st.stop()
 
-    # Filtro por Agencia origen
-    if 'Agencia origen' in df.columns:
-        agencias_origen = sorted(df['Agencia origen'].dropna().unique())
+    # Filtro por Agencia origen (también dependiente del cliente)
+    if 'Agencia origen' in df_filtrado.columns:
+        agencias_origen = sorted(df_filtrado['Agencia origen'].dropna().unique())
         agencia_origen_seleccionada = st.sidebar.selectbox("Agencia origen", ["Todas"] + agencias_origen)
     else:
         st.warning("⚠️ La columna 'Agencia origen' no existe. Se omitirá este filtro.")
         agencia_origen_seleccionada = "Todas"
 
-    # Filtro por Agencia destino
-    if 'Agencia destino' in df.columns:
-        agencias = sorted(df['Agencia destino'].dropna().unique())
+    # Filtro por Agencia destino (dependiente del cliente)
+    if 'Agencia destino' in df_filtrado.columns:
+        agencias = sorted(df_filtrado['Agencia destino'].dropna().unique())
         agencia_seleccionada = st.sidebar.selectbox("Agencia destino", ["Todas"] + agencias)
     else:
         st.error("❌ La columna 'Agencia destino' no existe en el archivo.")
         st.stop()
 
-    # Filtro por ED
-    if 'ED' in df.columns:
-        ed_opciones = sorted(df['ED'].dropna().unique())
+    # Filtro por ED (dependiente de los filtros anteriores)
+    if 'ED' in df_filtrado.columns:
+        ed_opciones = sorted(df_filtrado['ED'].dropna().unique())
         ed_seleccionada = st.sidebar.selectbox("Entrega a Domicilio (ED)", ["Todas"] + ed_opciones)
     else:
         st.warning("⚠️ La columna 'ED' no existe. Se omitirá este filtro.")
         ed_seleccionada = "Todas"
 
-    # Filtro por Condición de venta
-    if 'Condición de venta' in df.columns:
-        condiciones_venta = sorted(df['Condición de venta'].dropna().unique())
+    # Filtro por Condición de venta (dependiente de los filtros anteriores)
+    if 'Condición de venta' in df_filtrado.columns:
+        condiciones_venta = sorted(df_filtrado['Condición de venta'].dropna().unique())
         condicion_venta_seleccionada = st.sidebar.selectbox("Condición de venta", ["Todas"] + condiciones_venta)
     else:
         st.warning("⚠️ La columna 'Condición de venta' no existe. Se omitirá este filtro.")
         condicion_venta_seleccionada = "Todas"
 
-    # Aplicar filtros
+    # Ahora aplicar TODOS los filtros al DataFrame original
+    df_final = df.copy()
+
     if cliente_seleccionado != "Todos":
-        df = df[df['Cliente'] == cliente_seleccionado]
+        df_final = df_final[df_final['Cliente'] == cliente_seleccionado]
     if subcuenta_seleccionada != "Todas":
-        df = df[df['Subcuenta'] == subcuenta_seleccionada]
-    if 'Agencia origen' in df.columns and agencia_origen_seleccionada != "Todas":
-        df = df[df['Agencia origen'] == agencia_origen_seleccionada]
+        df_final = df_final[df_final['Subcuenta'] == subcuenta_seleccionada]
+    if 'Agencia origen' in df_final.columns and agencia_origen_seleccionada != "Todas":
+        df_final = df_final[df_final['Agencia origen'] == agencia_origen_seleccionada]
     if agencia_seleccionada != "Todas":
-        df = df[df['Agencia destino'] == agencia_seleccionada]
-    if 'ED' in df.columns and ed_seleccionada != "Todas":
-        df = df[df['ED'] == ed_seleccionada]
-    if 'Condición de venta' in df.columns and condicion_venta_seleccionada != "Todas":
-        df = df[df['Condición de venta'] == condicion_venta_seleccionada]
+        df_final = df_final[df_final['Agencia destino'] == agencia_seleccionada]
+    if 'ED' in df_final.columns and ed_seleccionada != "Todas":
+        df_final = df_final[df_final['ED'] == ed_seleccionada]
+    if 'Condición de venta' in df_final.columns and condicion_venta_seleccionada != "Todas":
+        df_final = df_final[df_final['Condición de venta'] == condicion_venta_seleccionada]
+
+    # Reemplazar el DataFrame original con el filtrado
+    df = df_final
 
     # --- NUEVA SECCIÓN: PORCENTAJE DE CUMPLIMIENTO POR SEMANA CON ALERTAS DE VARIACIÓN ---
     st.header("📈 Porcentaje de Cumplimiento por Semana con Alertas de Variación")
@@ -1344,48 +1358,27 @@ if uploaded_file is not None:
     # Columna 1: Volumen
     with col1:
         st.metric("📦 Total Pedidos (Excl. Canceladas)", total_pedidos)
-        st.metric("🎯 Cumplimiento Tradicional", f"{cumplimiento_tradicional:.1f}%")
-        st.metric("📈 Cumplimiento Gestión", f"{cumplimiento_gestion:.1f}%")
-        st.metric("🎯 FADR (1er Intento)", f"{fadr:.1f}%")
+        st.metric("🎯 Cumplimiento Entregas", f"{cumplimiento_tradicional:.1f}%")
 
     # Columna 2: Entregas y Real
     with col2:
         st.metric("✅ Entregados", entregados, f"{(entregados/total_pedidos*100):.1f}%")
-        st.metric("🚀 CUMPLIMIENTO REAL", f"{cumplimiento_real:.1f}%", 
-                 delta=f"{(cumplimiento_real - cumplimiento_tradicional):.1f}% vs Tradicional",
-                 delta_color="normal")
-        st.metric("💡 Tasa Resolución", f"{tasa_resolucion:.1f}%")
         st.metric("📊 Efectividad Visitas", f"{efectividad_visitas:.1f}%")
 
     # Columna 3: Devueltos y Visitas
     with col3:
         st.metric("🔄 Devueltos", devueltos, f"{(devueltos/total_pedidos*100):.1f}%")
         st.metric("📋 Visitas en Tiempo", visita_en_tiempo, f"{(visita_en_tiempo/total_pedidos*100):.1f}%")
-        st.metric("📍 Visitas Fuera Tiempo", visita_fuera_tiempo)
-        st.metric("📈 Total Alertas", len(df[df['Prioridad Alerta'] != ""]))
 
     # Columna 4: Pendientes y Críticos
     with col4:
         st.metric("⏳ Pendientes", pendientes_reales, f"{(pendientes_reales/total_pedidos*100):.1f}%")
         st.metric("⚠️ Pendientes Críticos", pendiente_fuera_tiempo)
-        st.metric("❌ Tasa Rechazo/Ausencia", f"{tasa_rechazo_ausencia:.1f}%")
-        st.metric("📦 Pedidos/Visita", f"{pedidos_por_visita:.2f}")
         
     # Columna 5: Canceladas y Alertas Creada
     with col5:
         st.metric("❌ Canceladas", canceladas, f"{(canceladas/df.shape[0]*100):.1f}%")
         st.metric("🚨 Creadas Demoradas (>24h)", alertas_creada_criticas)
-        st.metric("⚠️ Creadas Próximas a Vencer", alertas_creada_preventivas)
-        
-
-    # --- EXPLICACIÓN DEL CUMPLIMIENTO REAL ---
-    st.info(f"""
-    **📊 Explicación del Cumplimiento Real ({cumplimiento_real:.1f}%):**
-    Este indicador combina:
-    - **Entregas en tiempo**: {en_tiempo + en_tiempo_pd} pedidos ({(en_tiempo + en_tiempo_pd)/total_pedidos*100:.1f}%)
-    - **Visitas en tiempo**: {visita_en_tiempo} pedidos ({(visita_en_tiempo)/total_pedidos*100:.1f}%)
-    **Fórmula**: (Entregas en tiempo + Visitas en tiempo) / Total pedidos × 100
-    """)
 
     # --- TABLA DE RESUMEN MEJORADA ---
     st.header("📈 Detalle de Estados")
