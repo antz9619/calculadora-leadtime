@@ -1597,6 +1597,10 @@ if uploaded_file is not None:
     if canceladas > 0:
         st.header("📉 Top 5 Agencias Origen con Más Cancelaciones")
         top_agencias_cancel = df[df['Cumplimiento'] == "Cancelada"]['Agencia origen'].value_counts().head(5)
+        if not top_agencias_cancel.empty:
+            df_top_ag = top_agencias_cancel.reset_index()
+            df_top_ag.columns = ['Agencia Origen', 'Cantidad']
+
         fig_cancel = px.bar(
             top_agencias_cancel,
             x=top_agencias_cancel.values,
@@ -1610,23 +1614,33 @@ if uploaded_file is not None:
         fig_cancel.update_traces(texttemplate='%{text}', textposition='outside')
         fig_cancel.update_layout(yaxis={'categoryorder':'total ascending'})
         st.plotly_chart(fig_cancel, use_container_width=True)
+    else:
+        st.info("✅ No hay cancelaciones para mostrar.")   
 
     # --- NUEVO GRÁFICO: TOP 5 LOCALIDADES CON MÁS PEDIDOS FUERA DE TIEMPO ---
     st.header("⏳ Top 5 Localidades (Loc) con Más Pedidos Fuera de Tiempo")
     top_loc_fuera_tiempo = df[df['Cumplimiento'] == "Pendiente - Fuera de Tiempo"]['Loc'].value_counts().head(5)
-    fig_loc = px.bar(
-        top_loc_fuera_tiempo,
-        x=top_loc_fuera_tiempo.values,
-        y=top_loc_fuera_tiempo.index,
-        orientation='h',
-        text=top_loc_fuera_tiempo.values,
-        title="Top 5 Localidades con Más Pedidos Fuera de Tiempo",
-        color=top_loc_fuera_tiempo.values,
-        color_continuous_scale='Reds'
-    )
-    fig_loc.update_traces(texttemplate='%{text}', textposition='outside')
-    fig_loc.update_layout(yaxis={'categoryorder':'total ascending'})
-    st.plotly_chart(fig_loc, use_container_width=True)
+
+    if not top_loc_fuera_tiempo.empty:
+        # Convertir la Serie en un DataFrame para evitar errores
+        df_top_loc = top_loc_fuera_tiempo.reset_index()
+        df_top_loc.columns = ['Localidad', 'Cantidad']
+
+        fig_loc = px.bar(
+            top_loc_fuera_tiempo,
+            x=top_loc_fuera_tiempo.values,
+            y=top_loc_fuera_tiempo.index,
+            orientation='h',
+            text=top_loc_fuera_tiempo.values,
+            title="Top 5 Localidades con Más Pedidos Fuera de Tiempo",
+            color=top_loc_fuera_tiempo.values,
+            color_continuous_scale='Reds'
+        )
+        fig_loc.update_traces(texttemplate='%{text}', textposition='outside')
+        fig_loc.update_layout(yaxis={'categoryorder':'total ascending'})
+        st.plotly_chart(fig_loc, use_container_width=True)
+    else:
+        st.info("✅ No hay pedidos 'Fuera de Tiempo' para mostrar.")
 
     # --- NUEVA SECCIÓN: ALERTAS DE ESTADO "CREADA" DEMORADO ---
     alertas_creada_demorada = df[df['Alerta Creada Demorada'] != ""]
