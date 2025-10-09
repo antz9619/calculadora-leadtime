@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 import plotly.express as px
 import plotly.graph_objects as go
 from pptx import Presentation
@@ -36,13 +36,97 @@ def generar_excel_desde_df(df, nombre_hoja="Datos"):
     output.seek(0)
     return output
 
-# --- FERIADOS 2025 ---
-feriados_2025 = [
-    "2025-01-01", "2025-03-03", "2025-03-24", "2025-04-02",
-    "2025-04-17", "2025-04-18", "2025-05-01", "2025-05-25",
-    "2025-06-20", "2025-07-09", "2025-12-08", "2025-12-25"
-]
-feriados_set = set(pd.to_datetime(feriados_2025).date)
+# --- SISTEMA MEJORADO DE FERIADOS Y PUENTES ---
+
+def es_dia_festivo(fecha=None):
+    """Verifica si la fecha es un día festivo configurado"""
+    if fecha is None:
+        fecha = date.today()
+    
+    # Convertir a date si es datetime
+    if isinstance(fecha, datetime):
+        fecha = fecha.date()
+    
+    festivos = [
+        (1, 1),   # Año Nuevo
+        (3, 24),  # Día Nacional de la Memoria
+        (4, 2),   # Día del Veterano
+        (5, 1),   # Día del Trabajo
+        (5, 25),  # Día de la Revolución de Mayo
+        (6, 17),  # Paso a la Inmortalidad del Gral. Martín Güemes
+        (6, 20),  # Día de la Bandera
+        (7, 9),   # Día de la Independencia
+        (10, 12), # Día de la Raza
+        (11, 20), # Día de la Soberanía Nacional
+        (12, 8),  # Inmaculada Concepción
+        (12, 25), # Navidad
+        # Agregar más según necesidad
+    ]
+    return (fecha.month, fecha.day) in festivos
+
+def es_feriado_puente(fecha):
+    """
+    Detecta feriados puente con mensaje descriptivo.
+    Devuelve (bool, str) donde str es el motivo detallado
+    """
+    # Convertir a date si es datetime
+    if isinstance(fecha, datetime):
+        fecha = fecha.date()
+    
+    # Viernes antes de fin de semana festivo
+    if fecha.weekday() == 4:  # Viernes
+        sabado = fecha + timedelta(days=1)
+        domingo = fecha + timedelta(days=2)
+        
+        if es_dia_festivo(sabado) and es_dia_festivo(domingo):
+            return True, f"Viernes puente (festivo {sabado.strftime('%d/%m')} y {domingo.strftime('%d/%m')})"
+        elif es_dia_festivo(sabado):
+            return True, f"Viernes puente (festivo {sabado.strftime('%d/%m')})"
+        elif es_dia_festivo(domingo):
+            return True, f"Viernes puente (festivo {domingo.strftime('%d/%m')})"
+    
+    # Lunes después de fin de semana festivo
+    elif fecha.weekday() == 0:  # Lunes
+        domingo = fecha - timedelta(days=1)
+        sabado = fecha - timedelta(days=2)
+        
+        if es_dia_festivo(sabado) and es_dia_festivo(domingo):
+            return True, f"Lunes puente (festivo {sabado.strftime('%d/%m')} y {domingo.strftime('%d/%m')})"
+        elif es_dia_festivo(domingo):
+            return True, f"Lunes puente (festivo {domingo.strftime('%d/%m')})"
+        elif es_dia_festivo(sabado):
+            return True, f"Lunes puente (festivo {sabado.strftime('%d/%m')})"
+    
+    return False, ""
+
+def es_dia_laborable(fecha):
+    """Determina si una fecha es laborable (no fin de semana, no feriado, no puente)"""
+    # Convertir a date si es datetime
+    if isinstance(fecha, datetime):
+        fecha = fecha.date()
+    
+    # Verificar fin de semana
+    if fecha.weekday() >= 5:  # Sábado (5) o Domingo (6)
+        return False
+    
+    # Verificar feriados
+    if es_dia_festivo(fecha):
+        return False
+    
+    # Verificar puentes
+    if es_feriado_puente(fecha)[0]:  # Usamos el booleano de retorno
+        return False
+        
+    return True
+
+# REEMPLAZAR las funciones existentes
+def es_dia_habil(fecha):
+    """Determina si un día es hábil (versión mejorada con puentes)"""
+    return es_dia_laborable(fecha)
+
+def es_feriado(fecha):
+    """Determina si un día es feriado (versión mejorada)"""
+    return es_dia_festivo(fecha) or es_feriado_puente(fecha)[0]
 
 # --- DICCIONARIO DE SEMANAS REALES (CALENDARIO) ---
 def obtener_semana_calendario(fecha):
@@ -65,16 +149,6 @@ def obtener_semana_calendario(fecha):
 # Aplicar la función para crear la columna de semana calendario
 # (Esto debe hacerse después de cargar el DataFrame 'df' desde el archivo)
 
-def es_feriado(fecha):
-    return fecha in feriados_set
-
-def es_dia_habil(fecha):
-    if fecha.weekday() >= 5:  # 5=Sab, 6=Dom
-        return False
-    if es_feriado(fecha):
-        return False
-    return True
-
 def calcular_dias_habiles(fecha_inicio, fecha_fin):
     if pd.isna(fecha_inicio) or pd.isna(fecha_fin):
         return None
@@ -89,7 +163,7 @@ def calcular_dias_habiles(fecha_inicio, fecha_fin):
     if fecha_inicio > fecha_fin:
         return 0
     dias = 0
-    current = fecha_inicio
+    current = fecha_inicio + timedelta(days=1)
     while current <= fecha_fin:
         if es_dia_habil(current):
             dias += 1
@@ -251,15 +325,32 @@ if uploaded_file is not None:
     df['ZONA'] = df['Loc'].apply(determinar_zona)
 
     # Determinar días prometidos según ZONA, pero con excepción para Delivery Hero Riders
-    def determinar_dias_prometidos(row):
-        # Caso especial: DELIVERY HERO E-COMMERCE S.A. + RIDERS
-        if row.get('Cliente', '') == "DELIVERY HERO E-COMMERCE S.A." and row.get('Subcuenta', '') == "RIDERS":
-            return 3  # Siempre 3 días, sin importar zona
-        else:
-            # Comportamiento normal
-            return 3 if row['ZONA'] == "AMBA" else 5
+    def determinar_dias_prometidos_robusta(row):
+        """
+        Versión más robusta para determinar días prometidos
+        """
+        try:
+            # Normalizar y limpiar los valores
+            cliente = str(row.get('Cliente', '')).strip().upper()
+            subcuenta = str(row.get('Subcuenta', '')).strip().upper()
+            zona = str(row.get('ZONA', '')).strip()
+            
+            # Caso RIDERS (más flexible en la comparación)
+            if ("DELIVERY HERO" in cliente and "RIDERS" in subcuenta):
+                return 3
+            
+            # Caso normal
+            if zona == "AMBA":
+                return 3
+            else:
+                return 5
+                
+        except Exception as e:
+            # Si hay error, retornar valor por defecto
+            return 5
 
-    df['Días Prometidos'] = df.apply(determinar_dias_prometidos, axis=1)
+    # Prueba temporal con la versión robusta
+    df['Días Prometidos'] = df.apply(determinar_dias_prometidos_robusta, axis=1)
 
     # --- CÁLCULO DE LEAD TIME CORREGIDO ---
     def calcular_lead_time(row):
@@ -403,10 +494,16 @@ if uploaded_file is not None:
         if "Pendiente" in cumplimiento and "Fuera" not in cumplimiento and "Visita" not in cumplimiento:
             if pd.notna(row['Lead Time']):
                 restantes = row['Días Prometidos'] - row['Lead Time']
-                return f"{int(restantes)} días restantes" if restantes > 0 else "Vence hoy"
+                if restantes > 1:
+                    return f"{int(restantes)} días restantes"
+                elif restantes == 1:
+                    return "Vence mañana"
+                elif restantes == 0:
+                    return "Vence hoy"
+                else:
+                    return "Vencido"
         return ""
-
-    df['Días Restantes'] = df.apply(calcular_dias_restantes, axis=1)
+    df['Días Restantes'] = df.apply(calcular_dias_restantes, axis=1)            
 
     # --- ALERTA DE EN TRÁNSITO DEMORADO ---
     def alerta_en_transito_demorado(row):
@@ -615,9 +712,52 @@ if uploaded_file is not None:
 
     df['Alerta Reprogramada Sin Visitas'] = df.apply(alerta_reprogramada_sin_visitas, axis=1)
 
+    # --- NUEVA ALERTA GENERAL: VENCIMIENTO MAÑANA PARA TODOS LOS CLIENTES ---
+    def alerta_vencimiento_mañana(row):
+        """
+        Genera una alerta si:
+        - El pedido está pendiente
+        - Y vence mañana (Lead Time == Días Prometidos - 1) -> "Vence mañana"
+        - O ya está vencido (Lead Time >= Días Prometidos) -> "Ya vencido"
+        - Considera la excepción de RIDERS (siempre 3 días sin importar zona)
+        """
+        try:
+            estado = str(row.get('Estado', '')).lower()
+            cumplimiento = str(row.get('Cumplimiento', ''))
+            lead_time = row.get('Lead Time')
+            cliente = str(row.get('Cliente', '')).strip()
+            subcuenta = str(row.get('Subcuenta', '')).strip()
+            zona = row.get('ZONA', '')
+            
+            # Solo aplicar a pedidos pendientes (no entregados, no cancelados, no devueltos)
+            if ("entregada" in estado or 
+                "cancelada" in estado or 
+                "devuelto" in cumplimiento.lower()):
+                return ""
+
+            # Calcular días prometidos CORRECTAMENTE (igual que en determinar_dias_prometidos)
+            if cliente == "DELIVERY HERO E-COMMERCE S.A." and subcuenta == "RIDERS":
+                dias_prometidos_correcto = 3  # Excepción RIDERS: siempre 3 días
+            else:
+                dias_prometidos_correcto = 3 if zona == "AMBA" else 5  # Comportamiento normal
+
+            # Verificar condiciones de vencimiento
+            if (pd.notna(lead_time) and isinstance(lead_time, (int, float))):
+                if lead_time >= dias_prometidos_correcto:
+                    return "Ya vencido"
+                elif lead_time == dias_prometidos_correcto - 1:
+                    return "Vence mañana"
+            return ""
+        except Exception as e:
+            return ""
+
+    df['Alerta Vencimiento Mañana'] = df.apply(alerta_vencimiento_mañana, axis=1)
+
     # --- ASIGNAR PRIORIDAD A LAS ALERTAS (ACTUALIZADA CON NUEVA ALERTA) ---
     def asignar_prioridad(row):
-        if row['Alerta Pendiente Fuera Tiempo'] == "Fuera de tiempo crítico":
+        if row['Alerta Vencimiento Mañana'] == "Ya vencido":
+            return "ALTA - Ya Vencido"
+        elif row['Alerta Pendiente Fuera Tiempo'] == "Fuera de tiempo crítico":
             return "ALTA - Fuera de Tiempo"
         elif row['Alerta Devolución'] == "Sugerir devolución":
             return "ALTA - Devolución Demorada"
@@ -629,6 +769,8 @@ if uploaded_file is not None:
             return "ALTA - Reprogramada Sin Visita"
         elif row['Alerta Creada Demorada'] != "" and "demorada" in row['Alerta Creada Demorada'].lower():
             return "ALTA - Creada Demorada"
+        elif row['Alerta Vencimiento Mañana'] == "Vence mañana":
+            return "ALTA - Vence Mañana"
         elif row['Alerta Seguimiento Visitas'] != "":
             return "MEDIA - Seguimiento Visitas"
         elif row['Alerta Una Visita Sin Seguimiento'] != "":
@@ -644,15 +786,17 @@ if uploaded_file is not None:
 
     # Ordenar el DataFrame por prioridad para que las alertas altas aparezcan primero
     prioridad_orden = {
-        "ALTA - Fuera de Tiempo": 1, 
-        "ALTA - Devolución Demorada": 2, 
-        "ALTA - Redespacho": 3,
-        "ALTA - Reprogramada Sin Visita": 4,
-        "ALTA - Creada Demorada": 4,  # Nueva prioridad
-        "MEDIA - Seguimiento Visitas": 5, 
-        "MEDIA - 1 Visita Sin Seg.": 6,
-        "MEDIA - Creada Próxima a Vencer": 7,  # Nueva prioridad
-        "BAJA - Pago Pendiente": 8
+        "ALTA - Ya Vencido": 1,  # Nueva prioridad (más alta)
+        "ALTA - Fuera de Tiempo": 2, 
+        "ALTA - Devolución Demorada": 3, 
+        "ALTA - Redespacho": 4,
+        "ALTA - Reprogramada Sin Visita": 5,
+        "ALTA - Creada Demorada": 6,
+        "ALTA - Vence Mañana": 7,
+        "MEDIA - Seguimiento Visitas": 8, 
+        "MEDIA - 1 Visita Sin Seg.": 9,
+        "MEDIA - Creada Próxima a Vencer": 10,
+        "BAJA - Pago Pendiente": 11
     }
     df['Orden Prioridad'] = df['Prioridad Alerta'].map(prioridad_orden).fillna(999)
     df = df.sort_values('Orden Prioridad').reset_index(drop=True)
@@ -1813,6 +1957,40 @@ if uploaded_file is not None:
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
 
+    # --- NUEVA SECCIÓN: ALERTAS DE VENCIMIENTO MAÑANA Y YA VENCIDOS ---
+    alertas_vencimiento_mañana = df[df['Alerta Vencimiento Mañana'].isin(["Vence mañana", "Ya vencido"])]
+    if not alertas_vencimiento_mañana.empty:
+        st.header("🚨 Alertas de Vencimiento")
+        st.write("Pedidos que **vence mañana** o que **ya están vencidos**:")
+        
+        # Mostrar estadísticas rápidas
+        vence_mañana = len(alertas_vencimiento_mañana[alertas_vencimiento_mañana['Alerta Vencimiento Mañana'] == "Vence mañana"])
+        ya_vencido = len(alertas_vencimiento_mañana[alertas_vencimiento_mañana['Alerta Vencimiento Mañana'] == "Ya vencido"])
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric("📅 Vencen Mañana", vence_mañana)
+        with col2:
+            st.metric("⏰ Ya Vencidos", ya_vencido)
+        
+        columnas_alerta = [
+            'Guia', 'Importe total', 'Cliente', 'Subcuenta', 'Destinatario', 'Tel Destinatario',
+            'Loc', 'ZONA', 'Fecha', 'Fecha último estado', 'Estado', 
+            'Días Prometidos', 'Lead Time', 'Cumplimiento', 'Días Restantes',
+            'Alerta Vencimiento Mañana', 'Prioridad Alerta'
+        ]
+        columnas_existentes = [col for col in columnas_alerta if col in alertas_vencimiento_mañana.columns]
+        df_alerta = alertas_vencimiento_mañana[columnas_existentes]
+        st.dataframe(df_alerta)
+
+        excel_data = generar_excel_desde_df(df_alerta, "Alertas Vencimiento")
+        st.download_button(
+            label="📥 Descargar Alertas de Vencimiento (Excel)",
+            data=excel_data,
+            file_name="Alertas_Vencimiento.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+
     # --- DESCARGA COMBINADA DE TODAS LAS ALERTAS (ACTUALIZADA) ---
     st.header("📥 Descarga Combinada de Todas las Alertas")
     todas_alertas = df[
@@ -1823,15 +2001,17 @@ if uploaded_file is not None:
         (df['Alerta Pendiente Fuera Tiempo'] == "Fuera de tiempo crítico") |
         (df['Alerta Pago Pendiente'] == "Pago pendiente demorado") |
         (df['Alerta En Tránsito Demorado'] != "") |
-        (df['Alerta Creada Demorada'] != "")  # Nueva alerta agregada
+        (df['Alerta Creada Demorada'] != "") |
+        (df['Alerta Vencimiento Mañana'].isin(["Vence mañana", "Ya vencido"]))  # ← CORREGIDO
     ]
     if not todas_alertas.empty:
         columnas_todas = [
             'Guia','Importe total', 'Cliente', 'Destinatario', 'Tel Destinatario', 'Loc', 'ZONA', 'Visitas', 'Fecha último estado', 'Estado', 'Cumplimiento', 'Prioridad Alerta',
             'Alerta Seguimiento Visitas', 'Alerta Una Visita Sin Seguimiento', 
             'Alerta Devolución', 'Alerta Redespacho', 
-            'Alerta Pendiente Fuera Tiempo', 'Alerta Pago Pendiente', 
-            'Alerta En Tránsito Demorado', 'Alerta Creada Demorada'  # Nueva columna
+            'Alerta Pendiente Fuera Tiempo', 'Alerta Pago Pendiente',
+            'Alerta Vencimiento Mañana',
+            'Alerta En Tránsito Demorado', 'Alerta Creada Demorada'
         ]
         
         # Filtrar columnas que existen en el DataFrame
@@ -1861,7 +2041,8 @@ if uploaded_file is not None:
         'Cumplimiento', 'Días Restantes', 'Prioridad Alerta',
         'Alerta Seguimiento Visitas', 'Alerta Una Visita Sin Seguimiento',
         'Alerta Devolución', 'Alerta Redespacho', 'Alerta Pendiente Fuera Tiempo', 
-        'Alerta Pago Pendiente', 'Alerta En Tránsito Demorado', 'Alerta Creada Demorada'
+        'Alerta Pago Pendiente', 'Alerta En Tránsito Demorado', 'Alerta Creada Demorada',
+        'Alerta Vencimiento Mañana'  # Nueva columna
     ]
 
     columnas_existentes = [col for col in columnas_mostrar if col in df.columns]
@@ -1872,6 +2053,10 @@ if uploaded_file is not None:
     st.header("📥 Descargas Generales Actualizadas")
     
     # Preparar datos para el Excel de estadísticas
+    alertas_vencimiento_count = len(df[df['Alerta Vencimiento Mañana'].isin(["Vence mañana", "Ya vencido"])])
+    vence_mañana_count = len(df[df['Alerta Vencimiento Mañana'] == "Vence mañana"])
+    ya_vencido_count = len(df[df['Alerta Vencimiento Mañana'] == "Ya vencido"])
+
     stats_data = {
         "Métrica": [
             "Total Pedidos", "Entregados", "Devueltos", "Canceladas", "Pendientes Reales",
@@ -1883,7 +2068,8 @@ if uploaded_file is not None:
             "Pendiente - Fuera de Tiempo",
             "% Cumplimiento Tradicional", "% Cumplimiento Real", "% Cumplimiento Gestión",
             "FADR (%)", "Pedidos por Visita", "Tasa Rechazo/Ausencia (%)",
-            "Alertas Creada Demoradas", "Alertas Creada Próximas a Vencer"
+            "Alertas Creada Demoradas", "Alertas Creada Próximas a Vencer",
+            "Alertas Vencimiento Total", "Alertas Vencen Mañana", "Alertas Ya Vencidos"
         ],
         "Valor": [
             total_pedidos, entregados, devueltos, canceladas, pendientes_reales,
@@ -1895,7 +2081,8 @@ if uploaded_file is not None:
             pendiente_fuera_tiempo,
             f"{cumplimiento_tradicional:.2f}%", f"{cumplimiento_real:.2f}%", f"{cumplimiento_gestion:.2f}%",
             f"{fadr:.2f}%", f"{pedidos_por_visita:.2f}", f"{tasa_rechazo_ausencia:.2f}%",
-            alertas_creada_criticas, alertas_creada_preventivas
+            alertas_creada_criticas, alertas_creada_preventivas,
+            alertas_vencimiento_count, vence_mañana_count, ya_vencido_count
         ]
     }
     
@@ -1955,6 +2142,12 @@ if uploaded_file is not None:
         p.text = "Métricas Clave:"
         p.font.bold = True
         p.font.size = Pt(20)
+        
+        # Calcular métricas de vencimiento para el PowerPoint
+        alertas_vencimiento_count = len(df[df['Alerta Vencimiento Mañana'].isin(["Vence mañana", "Ya vencido"])])
+        vence_mañana_count = len(df[df['Alerta Vencimiento Mañana'] == "Vence mañana"])
+        ya_vencido_count = len(df[df['Alerta Vencimiento Mañana'] == "Ya vencido"])
+        
         metrics = [
             f"• Total de pedidos (Excl. Canceladas): {total_pedidos}",
             f"• Entregados: {entregados} ({(entregados/total_pedidos*100):.1f}%)",
@@ -1965,8 +2158,11 @@ if uploaded_file is not None:
             f"• Cumplimiento Gestión: {cumplimiento_gestion:.1f}%",
             f"• FADR (1er Intento): {fadr:.1f}%",
             f"• Visitas en Tiempo: {visita_en_tiempo}",
-            f"• Alertas Activas: {len(todas_alertas) if 'todas_alertas' in locals() else 0}",
-            f"• Alertas Creada Demoradas: {alertas_creada_criticas}"
+            f"• Alertas Activas: {len(todas_alertas)}",
+            f"• Alertas Creada Demoradas: {alertas_creada_criticas}",
+            f"• Alertas Vencimiento: {alertas_vencimiento_count}",
+            f"  - Vencen mañana: {vence_mañana_count}",
+            f"  - Ya vencidos: {ya_vencido_count}"
         ]
         for metric in metrics:
             p = tf.add_paragraph()
