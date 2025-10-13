@@ -85,18 +85,6 @@ def es_feriado_puente(fecha):
         elif es_dia_festivo(domingo):
             return True, f"Viernes puente (festivo {domingo.strftime('%d/%m')})"
     
-    # Lunes después de fin de semana festivo
-    elif fecha.weekday() == 0:  # Lunes
-        domingo = fecha - timedelta(days=1)
-        sabado = fecha - timedelta(days=2)
-        
-        if es_dia_festivo(sabado) and es_dia_festivo(domingo):
-            return True, f"Lunes puente (festivo {sabado.strftime('%d/%m')} y {domingo.strftime('%d/%m')})"
-        elif es_dia_festivo(domingo):
-            return True, f"Lunes puente (festivo {domingo.strftime('%d/%m')})"
-        elif es_dia_festivo(sabado):
-            return True, f"Lunes puente (festivo {sabado.strftime('%d/%m')})"
-    
     return False, ""
 
 def es_dia_laborable(fecha):
@@ -379,21 +367,12 @@ if uploaded_file is not None:
                 # Para pedidos PENDIENTES: calcular desde creación hasta HOY
                 lead_time = calcular_dias_habiles(row['Fecha'], fecha_actual_argentina)
             
-            # Aplicar día de gracia para Delivery Hero Riders
-            if row.get('Cliente', '') == "DELIVERY HERO E-COMMERCE S.A." and row.get('Subcuenta', '') == "RIDERS":
-                if pd.notna(lead_time) and lead_time > 0:
-                    lead_time = max(0, lead_time - 1)
             return lead_time
         except Exception as e:
             return None
 
     df['Lead Time'] = df.apply(calcular_lead_time, axis=1)
 
-    # Columna para identificar si se aplicó día de gracia
-    df['Día de Gracia Aplicado'] = df.apply(
-        lambda row: "Sí" if row.get('Cliente', '') == "DELIVERY HERO E-COMMERCE S.A." and row.get('Subcuenta', '') == "RIDERS" else "No",
-        axis=1
-    )
 
     # --- CÁLCULO DE CUMPLIMIENTO MEJORADO (CON VISITAS Y ACCIONES) ---
     def determinar_cumplimiento_mejorado(row):
@@ -407,27 +386,21 @@ if uploaded_file is not None:
             return "Cancelada"
         
         # --- MEJORADO: Identificar devoluciones de EVENTUAL por el nombre del destinatario ---
-        # Esta lógica se aplica SOLO si el cliente es "EVENTUAL"
         if row.get('Cliente', '') == "EVENTUAL":
-            # Manejo robusto de la columna Destinatario
             destinatario = ""
-            if 'Destinatario' in row.index:  # Verificar que la columna existe en la fila
+            if 'Destinatario' in row.index:
                 destinatario_value = row['Destinatario']
-                # Verificar que no sea NaN, None, o string vacío
                 if pd.notna(destinatario_value) and str(destinatario_value).strip() != "":
                     destinatario = str(destinatario_value).lower().strip()
             
-            # Lista de palabras clave que indican una devolución (en minúsculas para comparar)
             palabras_devolucion = ["devolucion", "devolucion md", "devolucion p-ya", "dev. pedidos ya/", 
-                                  "devoluciones", "devo", "devol", "devolución", "devoluciónes", 
-                                  "devol pedido ya", "dev a origen"]
+                                "devoluciones", "devo", "devol", "devolución", "devoluciónes", 
+                                "devol pedido ya", "dev a origen"]
             
-            # Verificar si alguna palabra clave está en el destinatario
             if destinatario and any(palabra in destinatario for palabra in palabras_devolucion):
                 return "Devuelto"
 
         # --- ACTUALIZADO: Verificar si es una devolución (estado cerrado) ---
-        # Ahora incluye "Devuelta"
         if "devolución informada" in estado or "devolucion informada" in estado or "devuelta" in estado:
             return "Devuelto"
 
@@ -452,46 +425,35 @@ if uploaded_file is not None:
                 return "Entregada - Fuera de Tiempo"
 
         else:
-            # --- NUEVA LÓGICA: PEDIDOS PENDIENTES CON VISITAS ---
-            # Calcular días desde la última visita hasta hoy
-            fecha_actual_argentina = obtener_fecha_actual_argentina().replace(tzinfo=None)
-            # La variable 'dias_desde_ultima_visita' se eliminó porque no se usaba.
-
-            # Verificar si tuvo al menos una visita dentro del tiempo prometido
-            lead_time_hasta_visita = calcular_dias_habiles(row['Fecha'], row['Fecha último estado']) if pd.notna(row['Fecha último estado']) else None
-
-            # Estados que indican una visita
-            estados_visita = [
-                "visita a domicilio", "reprogramada", "domicilio incompleto", 
-                "domicilio incorrecto", "ausente", "rechazado"
-            ]
-            es_estado_visita = any(estado_visita in estado for estado_visita in estados_visita)
-
-            if es_estado_visita and visitas > 0 and pd.notna(lead_time_hasta_visita):
-                if lead_time_hasta_visita <= row['Días Prometidos']:
-                    # Tuvo visita en tiempo, pero requiere acción según el motivo
-                    if "domicilio incompleto" in estado:
-                        return "Pendiente - Visita en Tiempo (Datos Incompletos)"
-                    elif "domicilio incorrecto" in estado:
-                        return "Pendiente - Visita en Tiempo (Domicilio Incorrecto)"
-                    elif "ausente" in estado:
-                        return "Pendiente - Visita en Tiempo (Cliente Ausente)"
-                    elif "rechazado" in estado:
-                        return "Pendiente - Visita en Tiempo (Cliente Rechazó)"
-                    else:
-                        return "Pendiente - Visita en Tiempo"
-                else:
-                    # Visita fuera de tiempo
-                    return "Pendiente - Visita Fuera de Tiempo"
-
-            # Para pendientes sin visita específica
+            # --- CORRECCIÓN CLAVE: USAR SIEMPRE EL LEAD TIME CONTRA HOY PARA EVALUAR VENCIMIENTO ---
             if pd.notna(row['Lead Time']):
                 if row['Lead Time'] < row['Días Prometidos']:
-                    return "Pendiente - En Tiempo"
+                    base_estado = "Pendiente - En Tiempo"
                 elif row['Lead Time'] == row['Días Prometidos']:
-                    return "Pendiente - Último Día"
+                    base_estado = "Pendiente - Último Día"
                 else:
-                    return "Pendiente - Fuera de Tiempo"
+                    base_estado = "Pendiente - Fuera de Tiempo"
+
+                # --- AÑADIR DETALLE DE VISITA (solo si aplica) ---
+                estados_visita = [
+                    "visita a domicilio", "reprogramada", "domicilio incompleto", 
+                    "domicilio incorrecto", "ausente", "rechazado"
+                ]
+                es_estado_visita = any(e in estado for e in estados_visita)
+
+                if es_estado_visita and visitas > 0:
+                    if "domicilio incompleto" in estado:
+                        return base_estado + " (Datos Incompletos)"
+                    elif "domicilio incorrecto" in estado:
+                        return base_estado + " (Domicilio Incorrecto)"
+                    elif "ausente" in estado:
+                        return base_estado + " (Cliente Ausente)"
+                    elif "rechazado" in estado:
+                        return base_estado + " (Cliente Rechazó)"
+                    else:
+                        return base_estado + " (Visita Realizada)"
+                else:
+                    return base_estado
             else:
                 return "Pendiente - Fuera de Tiempo"
 
@@ -500,7 +462,14 @@ if uploaded_file is not None:
     # Calcular días restantes para pendientes en tiempo
     def calcular_dias_restantes(row):
         cumplimiento = str(row['Cumplimiento'])
-        if "Pendiente" in cumplimiento and "Fuera" not in cumplimiento and "Visita" not in cumplimiento:
+        # Incluir todos los pendientes, incluso con visita, EXCEPTO:
+        # - Entregados, Devueltos, Cancelados
+        # - Pendientes ya FUERA de tiempo (para esos mostramos "Vencido")
+        if ("Pendiente" in cumplimiento and 
+            "Entregada" not in cumplimiento and 
+            "Devuelto" not in cumplimiento and 
+            "Cancelada" not in cumplimiento):
+            
             if pd.notna(row['Lead Time']):
                 restantes = row['Días Prometidos'] - row['Lead Time']
                 if restantes > 1:
@@ -2070,7 +2039,7 @@ if uploaded_file is not None:
         'Fecha', 'Semana Calendario', 'Porcentaje Cumplimiento Semana', 
         'Alerta Variación Semana', 'Variación vs Semana Anterior',  # Nuevas columnas
         'Fecha último estado', 'Estado', 'Visitas', 'ED', 'Loc', 'ZONA', 'Producto',
-        'Lead Time', 'Días Prometidos', 'Día de Gracia Aplicado',
+        'Lead Time', 'Días Prometidos',
         'Cumplimiento', 'Días Restantes', 'Prioridad Alerta',
         'Alerta Seguimiento Visitas', 'Alerta Una Visita Sin Seguimiento',
         'Alerta Devolución', 'Alerta Redespacho', 'Alerta Pendiente Fuera Tiempo', 
