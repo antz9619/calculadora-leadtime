@@ -146,28 +146,35 @@ def obtener_semana_calendario(fecha):
     except:
         return None
 
-# Aplicar la función para crear la columna de semana calendario
-# (Esto debe hacerse después de cargar el DataFrame 'df' desde el archivo)
-
+# --- FUNCIÓN CALCULAR DÍAS HÁBILES ACTUALIZADA (CON PUENTES) ---
 def calcular_dias_habiles(fecha_inicio, fecha_fin):
+    """
+    Calcula días hábiles entre dos fechas CONSIDERANDO FERIADOS Y PUENTES
+    """
     if pd.isna(fecha_inicio) or pd.isna(fecha_fin):
         return None
+    
     # Convertir ambos a timezone-naive para comparar
     if hasattr(fecha_inicio, 'tz') and fecha_inicio.tz is not None:
         fecha_inicio = fecha_inicio.replace(tzinfo=None)
     if hasattr(fecha_fin, 'tz') and fecha_fin.tz is not None:
         fecha_fin = fecha_fin.replace(tzinfo=None)
+    
     # Extraer solo la parte de fecha
     fecha_inicio = fecha_inicio.date() if hasattr(fecha_inicio, 'date') else fecha_inicio
     fecha_fin = fecha_fin.date() if hasattr(fecha_fin, 'date') else fecha_fin
+    
     if fecha_inicio > fecha_fin:
         return 0
+    
     dias = 0
-    current = fecha_inicio + timedelta(days=1)
+    current = fecha_inicio + timedelta(days=1)  # Empezar desde el día siguiente
+    
     while current <= fecha_fin:
-        if es_dia_habil(current):
+        if es_dia_habil(current):  # ← ¡AHORA SÍ usa la lógica completa con puentes!
             dias += 1
         current += timedelta(days=1)
+    
     return dias
 
 # --- LISTA DE LOCALIDADES AMBA ---
@@ -352,7 +359,7 @@ if uploaded_file is not None:
     # Prueba temporal con la versión robusta
     df['Días Prometidos'] = df.apply(determinar_dias_prometidos_robusta, axis=1)
 
-    # --- CÁLCULO DE LEAD TIME CORREGIDO ---
+    # --- CÁLCULO DE LEAD TIME CORREGIDO (CON PUENTES) ---
     def calcular_lead_time(row):
         try:
             estado = str(row['Estado']).lower()
@@ -364,12 +371,14 @@ if uploaded_file is not None:
             )
             # Usar la fecha actual de Argentina (sin timezone para compatibilidad)
             fecha_actual_argentina = obtener_fecha_actual_argentina().replace(tzinfo=None)
+            
             if entregado:
                 # Para pedidos ENTREGADOS: calcular desde creación hasta último estado
                 lead_time = calcular_dias_habiles(row['Fecha'], row['Fecha último estado'])
             else:
                 # Para pedidos PENDIENTES: calcular desde creación hasta HOY
                 lead_time = calcular_dias_habiles(row['Fecha'], fecha_actual_argentina)
+            
             # Aplicar día de gracia para Delivery Hero Riders
             if row.get('Cliente', '') == "DELIVERY HERO E-COMMERCE S.A." and row.get('Subcuenta', '') == "RIDERS":
                 if pd.notna(lead_time) and lead_time > 0:
@@ -505,7 +514,7 @@ if uploaded_file is not None:
         return ""
     df['Días Restantes'] = df.apply(calcular_dias_restantes, axis=1)            
 
-    # --- ALERTA DE EN TRÁNSITO DEMORADO ---
+    # --- ALERTA DE EN TRÁNSITO DEMORADO (ACTUALIZADA CON PUENTES) ---
     def alerta_en_transito_demorado(row):
         try:
             estado = str(row['Estado']).lower()
@@ -521,7 +530,7 @@ if uploaded_file is not None:
 
     df['Alerta En Tránsito Demorado'] = df.apply(alerta_en_transito_demorado, axis=1)
 
-    # --- NUEVA ALERTA: ESTADO "CREADA" DEMORADO MÁS DE 24 HORAS ---
+    # --- NUEVA ALERTA: ESTADO "CREADA" DEMORADO MÁS DE 24 HORAS (ACTUALIZADA CON PUENTES) ---
     def alerta_creada_demorada(row):
         try:
             estado = str(row['Estado']).lower()
@@ -552,7 +561,7 @@ if uploaded_file is not None:
 
     df['Alerta Creada Demorada'] = df.apply(alerta_creada_demorada, axis=1)
 
-    # --- NUEVAS ALERTAS MEJORADAS ---
+    # --- NUEVAS ALERTAS MEJORADAS (ACTUALIZADAS CON PUENTES) ---
     # Alerta para pedidos con MÚLTIPLES visitas sin seguimiento (2+ visitas, 3+ días)
     def alerta_seguimiento_visitas(row):
         try:
@@ -582,7 +591,7 @@ if uploaded_file is not None:
 
     df['Alerta Seguimiento Visitas'] = df.apply(alerta_seguimiento_visitas, axis=1)
 
-    # --- NUEVA ALERTA: UNA SOLA VISITA SIN SEGUIMIENTO EN 5 DÍAS ---
+    # --- NUEVA ALERTA: UNA SOLA VISITA SIN SEGUIMIENTO EN 5 DÍAS (ACTUALIZADA CON PUENTES) ---
     def alerta_una_visita_sin_seguimiento(row):
         try:
             visitas = row.get('Visitas', 0) if 'Visitas' in df.columns else 0
@@ -615,7 +624,7 @@ if uploaded_file is not None:
 
     df['Alerta Una Visita Sin Seguimiento'] = df.apply(alerta_una_visita_sin_seguimiento, axis=1)
 
-    # --- ALERTAS EXISTENTES (MANTENIDAS) ---
+    # --- ALERTAS EXISTENTES (MANTENIDAS Y ACTUALIZADAS CON PUENTES) ---
     def alerta_devolucion(row):
         try:
             estado = str(row['Estado']).lower()
@@ -646,7 +655,6 @@ if uploaded_file is not None:
             return ""
 
     df['Alerta Redespacho'] = df.apply(alerta_redespacho, axis=1)
-
 
     def alerta_en_transito_demorado(row):
         try:
@@ -687,7 +695,7 @@ if uploaded_file is not None:
 
     df['Alerta Pago Pendiente'] = df.apply(alerta_pago_pendiente, axis=1)
 
-    # --- NUEVA ALERTA: REPROGRAMADA CON 0 VISITAS ---
+    # --- NUEVA ALERTA: REPROGRAMADA CON 0 VISITAS (ACTUALIZADA CON PUENTES) ---
     def alerta_reprogramada_sin_visitas(row):
         try:
             estado = str(row['Estado']).lower()
@@ -708,11 +716,10 @@ if uploaded_file is not None:
             return ""
         except Exception as e:
             return ""
-        return ""
 
     df['Alerta Reprogramada Sin Visitas'] = df.apply(alerta_reprogramada_sin_visitas, axis=1)
 
-    # --- NUEVA ALERTA GENERAL: VENCIMIENTO MAÑANA PARA TODOS LOS CLIENTES ---
+    # --- NUEVA ALERTA GENERAL: VENCIMIENTO MAÑANA PARA TODOS LOS CLIENTES (CORREGIDA CON PUENTES) ---
     def alerta_vencimiento_mañana(row):
         """
         Genera una alerta si:
@@ -720,6 +727,7 @@ if uploaded_file is not None:
         - Y vence mañana (Lead Time == Días Prometidos - 1) -> "Vence mañana"
         - O ya está vencido (Lead Time >= Días Prometidos) -> "Ya vencido"
         - Considera la excepción de RIDERS (siempre 3 días sin importar zona)
+        - CORRECCIÓN: Verifica si "mañana" es día hábil
         """
         try:
             estado = str(row.get('Estado', '')).lower()
@@ -728,6 +736,7 @@ if uploaded_file is not None:
             cliente = str(row.get('Cliente', '')).strip()
             subcuenta = str(row.get('Subcuenta', '')).strip()
             zona = row.get('ZONA', '')
+            fecha_creacion = row.get('Fecha')
             
             # Solo aplicar a pedidos pendientes (no entregados, no cancelados, no devueltos)
             if ("entregada" in estado or 
@@ -742,11 +751,35 @@ if uploaded_file is not None:
                 dias_prometidos_correcto = 3 if zona == "AMBA" else 5  # Comportamiento normal
 
             # Verificar condiciones de vencimiento
-            if (pd.notna(lead_time) and isinstance(lead_time, (int, float))):
+            if (pd.notna(lead_time) and isinstance(lead_time, (int, float)) and
+                pd.notna(fecha_creacion)):
+                
+                # Ya vencido
                 if lead_time >= dias_prometidos_correcto:
                     return "Ya vencido"
+                
+                # Vence mañana - PERO VERIFICAR SI MAÑANA ES DÍA HÁBIL
                 elif lead_time == dias_prometidos_correcto - 1:
-                    return "Vence mañana"
+                    fecha_actual = obtener_fecha_actual_argentina().date()
+                    fecha_manana = fecha_actual + timedelta(days=1)
+                    
+                    # Verificar si "mañana" es día hábil
+                    if es_dia_habil(fecha_manana):
+                        return "Vence mañana"
+                    else:
+                        # Si mañana NO es hábil, buscar el próximo día hábil
+                        proximo_dia_habil = fecha_manana
+                        while not es_dia_habil(proximo_dia_habil):
+                            proximo_dia_habil += timedelta(days=1)
+                        
+                        # Calcular días hábiles hasta el próximo día hábil
+                        dias_hasta_proximo_habil = calcular_dias_habiles(fecha_actual, proximo_dia_habil)
+                        
+                        if dias_hasta_proximo_habil == 1:
+                            return f"Vence {proximo_dia_habil.strftime('%d/%m')}"
+                        else:
+                            return f"Vence en {dias_hasta_proximo_habil} días"
+                    
             return ""
         except Exception as e:
             return ""
@@ -2002,7 +2035,7 @@ if uploaded_file is not None:
         (df['Alerta Pago Pendiente'] == "Pago pendiente demorado") |
         (df['Alerta En Tránsito Demorado'] != "") |
         (df['Alerta Creada Demorada'] != "") |
-        (df['Alerta Vencimiento Mañana'].isin(["Vence mañana", "Ya vencido"]))  # ← CORREGIDO
+        (df['Alerta Vencimiento Mañana'].isin(["Vence mañana", "Ya vencido"]))
     ]
     if not todas_alertas.empty:
         columnas_todas = [
