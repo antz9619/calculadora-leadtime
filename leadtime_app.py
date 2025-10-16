@@ -1499,7 +1499,7 @@ if uploaded_file is not None:
     # Columna 2: Entregas y Real
     with col2:
         st.metric("✅ Entregados", entregados, f"{(entregados/total_pedidos*100):.1f}%")
-        st.metric("📊 Cumplimiento Tradicional", f"{cumplimiento_tradicional:.1f}%")  # CAMBIADO
+        st.metric("📊 Cumplimiento Entregas", f"{cumplimiento_tradicional:.1f}%")  # CAMBIADO
 
     # Columna 3: Devueltos y Visitas
     with col3:
