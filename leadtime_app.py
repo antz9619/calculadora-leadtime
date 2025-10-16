@@ -884,22 +884,18 @@ if uploaded_file is not None:
     # --- NUEVA SECCIÓN: PORCENTAJE DE CUMPLIMIENTO POR SEMANA CON ALERTAS DE VARIACIÓN ---
     st.header("📈 Porcentaje de Cumplimiento por Semana con Alertas de Variación")
 
-    # Calcular el porcentaje de cumplimiento por semana
+    # CORREGIDO: Calcular el porcentaje de cumplimiento por semana
     def calcular_cumplimiento_semana(grupo):
+        # EXCLUIR CANCELADAS del total
         total_pedidos_semana = grupo[grupo['Cumplimiento'] != "Cancelada"].shape[0]
         if total_pedidos_semana == 0:
             return 0
         
-        # Contar pedidos cumplidos (entregas en tiempo + visitas en tiempo)
+        # Contar SOLO entregas en tiempo (no incluir visitas en tiempo)
         cumplidos_semana = grupo[
             grupo['Cumplimiento'].isin([
                 "Entregada - En Tiempo", 
-                "Entregada - En Tiempo (PD: Pago Pendiente)",
-                "Pendiente - Visita en Tiempo",
-                "Pendiente - Visita en Tiempo (Datos Incompletos)",
-                "Pendiente - Visita en Tiempo (Domicilio Incorrecto)", 
-                "Pendiente - Visita en Tiempo (Cliente Ausente)",
-                "Pendiente - Visita en Tiempo (Cliente Rechazó)"
+                "Entregada - En Tiempo (PD: Pago Pendiente)"
             ])
         ].shape[0]
         
@@ -1066,22 +1062,18 @@ if uploaded_file is not None:
     # --- NUEVA SECCIÓN: PORCENTAJE DE CUMPLIMIENTO POR SEMANA Y ZONA CON ALERTAS DE VARIACIÓN ---
     st.header("📈 Porcentaje de Cumplimiento por Semana y Zona")
 
-    # Calcular el porcentaje de cumplimiento por semana y zona
+    # CORREGIDO: Calcular el porcentaje de cumplimiento por semana y zona
     def calcular_cumplimiento_semana_zona(grupo):
+        # EXCLUIR CANCELADAS del total
         total_pedidos_semana = grupo[grupo['Cumplimiento'] != "Cancelada"].shape[0]
         if total_pedidos_semana == 0:
             return 0
         
-        # Contar pedidos cumplidos (entregas en tiempo + visitas en tiempo)
+        # Contar SOLO entregas en tiempo (no incluir visitas en tiempo)
         cumplidos_semana = grupo[
             grupo['Cumplimiento'].isin([
                 "Entregada - En Tiempo", 
-                "Entregada - En Tiempo (PD: Pago Pendiente)",
-                "Pendiente - Visita en Tiempo",
-                "Pendiente - Visita en Tiempo (Datos Incompletos)",
-                "Pendiente - Visita en Tiempo (Domicilio Incorrecto)", 
-                "Pendiente - Visita en Tiempo (Cliente Ausente)",
-                "Pendiente - Visita en Tiempo (Cliente Rechazó)"
+                "Entregada - En Tiempo (PD: Pago Pendiente)"
             ])
         ].shape[0]
         
@@ -1450,24 +1442,22 @@ if uploaded_file is not None:
     pendiente_fuera_tiempo = df[df['Cumplimiento'] == "Pendiente - Fuera de Tiempo"].shape[0]
     pendiente_ultimo_dia = df[df['Cumplimiento'] == "Pendiente - Último Día"].shape[0]
 
-    # --- NUEVOS INDICADORES MEJORADOS ---
-    # 1. Cumplimiento tradicional (solo entregados)
+    # --- CORREGIDO: NUEVOS INDICADORES MEJORADOS ---
+    # 1. SLA Principal (según tu consulta): Entregas en tiempo / Total pedidos (excl. canceladas)
+    sla_principal = ((en_tiempo + en_tiempo_pd) / total_pedidos * 100) if total_pedidos > 0 else 0
+
+    # 2. Cumplimiento tradicional (solo entregados en tiempo vs total entregados)
     cumplimiento_tradicional = ((en_tiempo + en_tiempo_pd) / entregados * 100) if entregados > 0 else 0
 
-    # 2. Cumplimiento de gestión (entregados + visitas en tiempo)
-    pedidos_gestionados = entregados + visita_en_tiempo
-    cumplimiento_gestion = (pedidos_gestionados / total_pedidos * 100) if total_pedidos > 0 else 0
+    # 3. Cumplimiento de gestión (entregados + visitas en tiempo)
+    cumplimiento_gestion = ((en_tiempo + en_tiempo_pd + visita_en_tiempo) / total_pedidos * 100) if total_pedidos > 0 else 0
 
-    # 3. Efectividad de visitas
+    # 4. Efectividad de visitas
     total_visitas = visita_en_tiempo + visita_fuera_tiempo
     efectividad_visitas = (visita_en_tiempo / total_visitas * 100) if total_visitas > 0 else 0
 
-    # 4. Tasa de resolución (entregados / total gestionado)
-    tasa_resolucion = (entregados / pedidos_gestionados * 100) if pedidos_gestionados > 0 else 0
-
-    # --- NUEVO INDICADOR: CUMPLIMIENTO REAL ---
-    # Este es el indicador principal que combina entregas + visitas en tiempo
-    cumplimiento_real = ((en_tiempo + en_tiempo_pd + visita_en_tiempo) / total_pedidos * 100) if total_pedidos > 0 else 0
+    # 5. Tasa de resolución (entregados / total gestionado)
+    tasa_resolucion = (entregados / (entregados + visita_en_tiempo + visita_fuera_tiempo) * 100) if (entregados + visita_en_tiempo + visita_fuera_tiempo) > 0 else 0
 
     # --- NUEVOS KPIs DE EFICIENCIA ---
     # Primer Intento de Entrega (First Attempt Delivery Rate - FADR)
@@ -1497,24 +1487,24 @@ if uploaded_file is not None:
     alertas_creada_criticas = df[df['Alerta Creada Demorada'].str.contains("demorada", na=False)].shape[0]
     alertas_creada_preventivas = df[df['Alerta Creada Demorada'].str.contains("próxima a vencer", na=False)].shape[0]
 
-    # --- PRESENTACIÓN DE MÉTRICAS EN 5 COLUMNAS (COMO EN LA IMAGEN) ---
+    # --- PRESENTACIÓN DE MÉTRICAS EN 5 COLUMNAS (ACTUALIZADAS) ---
 
     col1, col2, col3, col4, col5 = st.columns(5)
 
     # Columna 1: Volumen
     with col1:
         st.metric("📦 Total Pedidos (Excl. Canceladas)", total_pedidos)
-        st.metric("🎯 Cumplimiento Entregas", f"{cumplimiento_tradicional:.1f}%")
+        st.metric("🎯 SLA Principal", f"{sla_principal:.1f}%")  # CAMBIADO
 
     # Columna 2: Entregas y Real
     with col2:
         st.metric("✅ Entregados", entregados, f"{(entregados/total_pedidos*100):.1f}%")
-        st.metric("📊 Efectividad Visitas", f"{efectividad_visitas:.1f}%")
+        st.metric("📊 Cumplimiento Tradicional", f"{cumplimiento_tradicional:.1f}%")  # CAMBIADO
 
     # Columna 3: Devueltos y Visitas
     with col3:
         st.metric("🔄 Devueltos", devueltos, f"{(devueltos/total_pedidos*100):.1f}%")
-        st.metric("📋 Visitas en Tiempo", visita_en_tiempo, f"{(visita_en_tiempo/total_pedidos*100):.1f}%")
+        st.metric("📋 Cumplimiento Gestión", f"{cumplimiento_gestion:.1f}%")  # CAMBIADO
 
     # Columna 4: Pendientes y Críticos
     with col4:
@@ -1523,10 +1513,10 @@ if uploaded_file is not None:
         
     # Columna 5: Canceladas y Alertas Creada
     with col5:
-        st.metric("❌ Canceladas", canceladas, f"{(canceladas/df.shape[0]*100):.1f}%")
+        st.metric("❌ Canceladas", canceladas, f"{(canceladas/(total_pedidos + canceladas)*100):.1f}%")
         st.metric("🚨 Creadas Demoradas (>24h)", alertas_creada_criticas)
 
-    # --- TABLA DE RESUMEN MEJORADA ---
+    # --- TABLA DE RESUMEN MEJORADA (ACTUALIZADA) ---
     st.header("📈 Detalle de Estados")
     resumen_data = {
         "Categoría": [
@@ -1544,7 +1534,8 @@ if uploaded_file is not None:
             "PENDIENTES SIN VISITA",
             " - En Tiempo",
             " - Último Día",
-            " - Fuera de Tiempo"
+            " - Fuera de Tiempo",
+            "SLA PRINCIPAL (En Tiempo/Total)"  # NUEVA FILA
         ],
         "Cantidad": [
             total_pedidos,
@@ -1561,7 +1552,8 @@ if uploaded_file is not None:
             pendiente_en_tiempo + pendiente_ultimo_dia + pendiente_fuera_tiempo,
             pendiente_en_tiempo,
             pendiente_ultimo_dia,
-            pendiente_fuera_tiempo
+            pendiente_fuera_tiempo,
+            ""  # Vacío para cantidad
         ],
         "Porcentaje": [
             "100%",
@@ -1571,14 +1563,15 @@ if uploaded_file is not None:
             f"{(fuera_tiempo/total_pedidos*100):.1f}%",
             f"{(fuera_tiempo_pd/total_pedidos*100):.1f}%",
             f"{(devuelto_count/total_pedidos*100):.1f}%",
-            f"{(canceladas/df.shape[0]*100):.1f}%",
+            f"{(canceladas/(total_pedidos + canceladas)*100):.1f}%",  # Sobre total incluyendo canceladas
             f"{((visita_en_tiempo + visita_fuera_tiempo)/total_pedidos*100):.1f}%",
             f"{(visita_en_tiempo/total_pedidos*100):.1f}%",
             f"{(visita_fuera_tiempo/total_pedidos*100):.1f}%",
             f"{((pendiente_en_tiempo + pendiente_ultimo_dia + pendiente_fuera_tiempo)/total_pedidos*100):.1f}%",
             f"{(pendiente_en_tiempo/total_pedidos*100):.1f}%",
             f"{(pendiente_ultimo_dia/total_pedidos*100):.1f}%",
-            f"{(pendiente_fuera_tiempo/total_pedidos*100):.1f}%"
+            f"{(pendiente_fuera_tiempo/total_pedidos*100):.1f}%",
+            f"{sla_principal:.1f}%"  # NUEVA FILA
         ]
     }
     resumen_df = pd.DataFrame(resumen_data)
@@ -1634,15 +1627,15 @@ if uploaded_file is not None:
     fig1.update_traces(textinfo='percent+value', textposition='inside')
     st.plotly_chart(fig1, use_container_width=True)
 
-    # --- GRÁFICO COMPARATIVO DE INDICADORES ---
+    # --- GRÁFICO COMPARATIVO DE INDICADORES (ACTUALIZADO) ---
     st.header("📈 Comparativa de Indicadores de Cumplimiento")
     indicadores_comparativa = {
-        "Indicador": ["Cumplimiento Tradicional", "Cumplimiento Real", "Cumplimiento Gestión"],
-        "Porcentaje": [cumplimiento_tradicional, cumplimiento_real, cumplimiento_gestion],
+        "Indicador": ["SLA Principal", "Cumplimiento Tradicional", "Cumplimiento Gestión"],
+        "Porcentaje": [sla_principal, cumplimiento_tradicional, cumplimiento_gestion],
         "Descripción": [
-            "Solo entregas en tiempo",
-            "Entregas + Visitas en tiempo", 
-            "Gestión total (excluye devoluciones y canceladas)"
+            "Entregas en tiempo / Total pedidos",  # SLA REAL
+            "Entregas en tiempo / Total entregados", 
+            "Gestión total (entregas + visitas en tiempo)"
         ]
     }
     df_comparativa = pd.DataFrame(indicadores_comparativa)
@@ -1654,9 +1647,9 @@ if uploaded_file is not None:
         text="Porcentaje",
         title="Comparativa de Diferentes Indicadores de Cumplimiento",
         color_discrete_map={
-            "Cumplimiento Tradicional": "#ffc107",
-            "Cumplimiento Real": "#28a745",
-            "Cumplimiento Gestión": "#007bff"
+            "SLA Principal": "#28a745",  # Verde para SLA principal
+            "Cumplimiento Tradicional": "#ffc107",  # Amarillo
+            "Cumplimiento Gestión": "#007bff"  # Azul
         }
     )
     fig2.update_traces(texttemplate='%{y:.1f}%', textposition='outside')
@@ -2068,7 +2061,7 @@ if uploaded_file is not None:
             "Pendiente - Visita en Tiempo", "Pendiente - Visita Fuera de Tiempo",
             "Pendiente - En Tiempo", "Pendiente - Último Día",
             "Pendiente - Fuera de Tiempo",
-            "% Cumplimiento Tradicional", "% Cumplimiento Real", "% Cumplimiento Gestión",
+            "SLA Principal (%)", "Cumplimiento Tradicional (%)", "Cumplimiento Gestión (%)",
             "FADR (%)", "Pedidos por Visita", "Tasa Rechazo/Ausencia (%)",
             "Alertas Creada Demoradas", "Alertas Creada Próximas a Vencer",
             "Alertas Vencimiento Total", "Alertas Vencen Mañana", "Alertas Ya Vencidos"
@@ -2081,7 +2074,7 @@ if uploaded_file is not None:
             visita_en_tiempo, visita_fuera_tiempo,
             pendiente_en_tiempo, pendiente_ultimo_dia,
             pendiente_fuera_tiempo,
-            f"{cumplimiento_tradicional:.2f}%", f"{cumplimiento_real:.2f}%", f"{cumplimiento_gestion:.2f}%",
+            f"{sla_principal:.2f}%", f"{cumplimiento_tradicional:.2f}%", f"{cumplimiento_gestion:.2f}%",
             f"{fadr:.2f}%", f"{pedidos_por_visita:.2f}", f"{tasa_rechazo_ausencia:.2f}%",
             alertas_creada_criticas, alertas_creada_preventivas,
             alertas_vencimiento_count, vence_mañana_count, ya_vencido_count
@@ -2155,8 +2148,8 @@ if uploaded_file is not None:
             f"• Entregados: {entregados} ({(entregados/total_pedidos*100):.1f}%)",
             f"• Devueltos: {devueltos} ({(devueltos/total_pedidos*100):.1f}%)",
             f"• Canceladas: {canceladas}",
+            f"• SLA Principal: {sla_principal:.1f}%",  # ACTUALIZADO
             f"• Cumplimiento Tradicional: {cumplimiento_tradicional:.1f}%",
-            f"• Cumplimiento Real: {cumplimiento_real:.1f}%",
             f"• Cumplimiento Gestión: {cumplimiento_gestion:.1f}%",
             f"• FADR (1er Intento): {fadr:.1f}%",
             f"• Visitas en Tiempo: {visita_en_tiempo}",
