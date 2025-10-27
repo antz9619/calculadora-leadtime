@@ -846,6 +846,14 @@ if uploaded_file is not None:
         st.error("❌ La columna 'Agencia destino' no existe en el archivo.")
         st.stop()
 
+    # Filtro por ZONA (dependiente de los filtros anteriores)
+    if 'ZONA' in df_filtrado.columns:
+        zonas = sorted(df_filtrado['ZONA'].dropna().unique())
+        zona_seleccionada = st.sidebar.selectbox("Zona", ["Todas"] + zonas)
+    else:
+        st.warning("⚠️ La columna 'ZONA' no existe. Se omitirá este filtro.")
+        zona_seleccionada = "Todas"        
+
     # Filtro por ED (dependiente de los filtros anteriores)
     if 'ED' in df_filtrado.columns:
         ed_opciones = sorted(df_filtrado['ED'].dropna().unique())
@@ -873,6 +881,8 @@ if uploaded_file is not None:
         df_final = df_final[df_final['Agencia origen'] == agencia_origen_seleccionada]
     if agencia_seleccionada != "Todas":
         df_final = df_final[df_final['Agencia destino'] == agencia_seleccionada]
+    if 'ZONA' in df_final.columns and zona_seleccionada != "Todas":
+        df_final = df_final[df_final['ZONA'] == zona_seleccionada]    
     if 'ED' in df_final.columns and ed_seleccionada != "Todas":
         df_final = df_final[df_final['ED'] == ed_seleccionada]
     if 'Condición de venta' in df_final.columns and condicion_venta_seleccionada != "Todas":
