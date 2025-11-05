@@ -1524,7 +1524,7 @@ if uploaded_file is not None:
     # Columna 5: Canceladas y Alertas Creada
     with col5:
         st.metric("❌ Canceladas", canceladas, f"{(canceladas/(total_pedidos + canceladas)*100):.1f}%")
-        st.metric("🚨 Creadas Demoradas (>24h)", alertas_creada_criticas)
+        st.metric("🚫 Tasa Rechazo/Ausencia", f"{tasa_rechazo_ausencia:.1f}%")
 
     # --- TABLA DE RESUMEN MEJORADA (ACTUALIZADA) ---
     st.header("📈 Detalle de Estados")
