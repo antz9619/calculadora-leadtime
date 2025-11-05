@@ -19,6 +19,7 @@ from openpyxl.chart.label import DataLabelList
 import numpy as np
 import unicodedata
 import pytz  # Para manejo de zonas horarias
+import re  # Para expresiones regulares en detección robusta
 
 # --- CONFIGURACIÓN DE ZONA HORARIA ---
 # Definir la zona horaria de Argentina
@@ -1483,9 +1484,32 @@ if uploaded_file is not None:
     pedidos_con_visita = df[(df['Cumplimiento'].str.startswith("Entregada")) & (df.get('Visitas', 0) >= 1)].shape[0]
     pedidos_por_visita = (pedidos_con_visita / total_visitas_entregados) if total_visitas_entregados > 0 else 0
 
-    # --- KPI: TASA DE RECHAZO/AUSENCIA ---
+    # --- KPI MEJORADO: TASA DE RECHAZO/AUSENCIA - VERSIÓN ROBUSTA CON REGEX ---
+    def es_rechazo_ausente_regex(estado):
+        """Detecta rechazo/ausencia usando expresiones regulares para mayor precisión"""
+        if pd.isna(estado):
+            return False
+        
+        estado_str = str(estado).strip()
+        
+        # Patrones regex para detectar motivos
+        patrones = [
+            r'\[Motivo:\s*(Rechazado|Ausente)',  # [Motivo: Rechazado] o [Motivo: Ausente]
+            r'\[Motivo:\s*.*(rechaz|ausent)',    # Cualquier variación
+            r'(rechazado|ausente).*\[Motivo:',   # Formato inverso
+            r'cliente\s+(rechazó|no aceptó|ausente|no se presentó)',
+            r'motivo.*rechaz|motivo.*ausent'     # Otras variaciones
+        ]
+        
+        for patron in patrones:
+            if re.search(patron, estado_str, re.IGNORECASE):
+                return True
+        
+        return False
+
+    # Aplicar la versión con regex
     rechazos_ausentes = df[
-        (df['Estado'].str.lower().str.contains('ausente|rechazado')) &
+        df['Estado'].apply(es_rechazo_ausente_regex) &
         (df['Visitas'] > 0)
     ].shape[0]
 
@@ -1504,27 +1528,36 @@ if uploaded_file is not None:
     # Columna 1: Volumen
     with col1:
         st.metric("📦 Total Pedidos (Excl. Canceladas)", total_pedidos)
-        st.metric("🎯 SLA Principal", f"{sla_principal:.1f}%")  # CAMBIADO
+        st.metric("🎯 SLA Principal", f"{sla_principal:.1f}%")
 
     # Columna 2: Entregas y Real
     with col2:
         st.metric("✅ Entregados", entregados, f"{(entregados/total_pedidos*100):.1f}%")
-        st.metric("📊 Cumplimiento Entregas", f"{cumplimiento_tradicional:.1f}%")  # CAMBIADO
+        st.metric("📊 Cumplimiento Entregas", f"{cumplimiento_tradicional:.1f}%")
 
     # Columna 3: Devueltos y Visitas
     with col3:
         st.metric("🔄 Devueltos", devueltos, f"{(devueltos/total_pedidos*100):.1f}%")
-        st.metric("📋 Cumplimiento Gestión", f"{cumplimiento_gestion:.1f}%")  # CAMBIADO
+        st.metric("📋 Cumplimiento Gestión", f"{cumplimiento_gestion:.1f}%")
 
-    # Columna 4: Pendientes y Críticos
+    # Columna 4: Pendientes y Rechazos
     with col4:
         st.metric("⏳ Pendientes", pendientes_reales, f"{(pendientes_reales/total_pedidos*100):.1f}%")
-        st.metric("⚠️ Pendientes Críticos", pendiente_fuera_tiempo)
+        st.metric("🚫 Tasa Rechazo/Ausencia", f"{tasa_rechazo_ausencia:.1f}%")
         
     # Columna 5: Canceladas y Alertas Creada
     with col5:
         st.metric("❌ Canceladas", canceladas, f"{(canceladas/(total_pedidos + canceladas)*100):.1f}%")
-        st.metric("🚫 Tasa Rechazo/Ausencia", f"{tasa_rechazo_ausencia:.1f}%")
+        st.metric("🚨 Creadas Demoradas (>24h)", alertas_creada_criticas)
+
+    # --- DEBUG: Mostrar ejemplos de rechazo/ausencia detectados ---
+    if st.sidebar.checkbox("🔍 Mostrar pedidos con rechazo/ausencia detectados"):
+        ejemplos_rechazo = df[df['Estado'].apply(es_rechazo_ausente_regex) & (df['Visitas'] > 0)]
+        if not ejemplos_rechazo.empty:
+            st.sidebar.write(f"📋 Ejemplos detectados ({len(ejemplos_rechazo)}):")
+            st.sidebar.dataframe(ejemplos_rechazo[['Guia', 'Estado', 'Visitas']].head(5))
+        else:
+            st.sidebar.info("No se detectaron pedidos con rechazo/ausencia")
 
     # --- TABLA DE RESUMEN MEJORADA (ACTUALIZADA) ---
     st.header("📈 Detalle de Estados")
@@ -1545,7 +1578,8 @@ if uploaded_file is not None:
             " - En Tiempo",
             " - Último Día",
             " - Fuera de Tiempo",
-            "SLA PRINCIPAL (En Tiempo/Total)"  # NUEVA FILA
+            "SLA PRINCIPAL (En Tiempo/Total)",
+            "TASA RECHAZO/AUSENCIA"
         ],
         "Cantidad": [
             total_pedidos,
@@ -1563,7 +1597,8 @@ if uploaded_file is not None:
             pendiente_en_tiempo,
             pendiente_ultimo_dia,
             pendiente_fuera_tiempo,
-            ""  # Vacío para cantidad
+            "",  # Vacío para cantidad
+            rechazos_ausentes
         ],
         "Porcentaje": [
             "100%",
@@ -1581,7 +1616,8 @@ if uploaded_file is not None:
             f"{(pendiente_en_tiempo/total_pedidos*100):.1f}%",
             f"{(pendiente_ultimo_dia/total_pedidos*100):.1f}%",
             f"{(pendiente_fuera_tiempo/total_pedidos*100):.1f}%",
-            f"{sla_principal:.1f}%"  # NUEVA FILA
+            f"{sla_principal:.1f}%",
+            f"{tasa_rechazo_ausencia:.1f}%"
         ]
     }
     resumen_df = pd.DataFrame(resumen_data)
@@ -1640,12 +1676,13 @@ if uploaded_file is not None:
     # --- GRÁFICO COMPARATIVO DE INDICADORES (ACTUALIZADO) ---
     st.header("📈 Comparativa de Indicadores de Cumplimiento")
     indicadores_comparativa = {
-        "Indicador": ["SLA Principal", "Cumplimiento Tradicional", "Cumplimiento Gestión"],
-        "Porcentaje": [sla_principal, cumplimiento_tradicional, cumplimiento_gestion],
+        "Indicador": ["SLA Principal", "Cumplimiento Entregas", "Cumplimiento Gestión", "Tasa Rechazo/Ausencia"],
+        "Porcentaje": [sla_principal, cumplimiento_tradicional, cumplimiento_gestion, tasa_rechazo_ausencia],
         "Descripción": [
-            "Entregas en tiempo / Total pedidos",  # SLA REAL
+            "Entregas en tiempo / Total pedidos",
             "Entregas en tiempo / Total entregados", 
-            "Gestión total (entregas + visitas en tiempo)"
+            "Gestión total (entregas + visitas en tiempo)",
+            "Rechazos y ausencias / Total con visita"
         ]
     }
     df_comparativa = pd.DataFrame(indicadores_comparativa)
@@ -1657,9 +1694,10 @@ if uploaded_file is not None:
         text="Porcentaje",
         title="Comparativa de Diferentes Indicadores de Cumplimiento",
         color_discrete_map={
-            "SLA Principal": "#28a745",  # Verde para SLA principal
-            "Cumplimiento Tradicional": "#ffc107",  # Amarillo
-            "Cumplimiento Gestión": "#007bff"  # Azul
+            "SLA Principal": "#28a745",
+            "Cumplimiento Entregas": "#ffc107",
+            "Cumplimiento Gestión": "#007bff",
+            "Tasa Rechazo/Ausencia": "#dc3545"
         }
     )
     fig2.update_traces(texttemplate='%{y:.1f}%', textposition='outside')
@@ -2071,7 +2109,7 @@ if uploaded_file is not None:
             "Pendiente - Visita en Tiempo", "Pendiente - Visita Fuera de Tiempo",
             "Pendiente - En Tiempo", "Pendiente - Último Día",
             "Pendiente - Fuera de Tiempo",
-            "SLA Principal (%)", "Cumplimiento Tradicional (%)", "Cumplimiento Gestión (%)",
+            "SLA Principal (%)", "Cumplimiento Entregas (%)", "Cumplimiento Gestión (%)",
             "FADR (%)", "Pedidos por Visita", "Tasa Rechazo/Ausencia (%)",
             "Alertas Creada Demoradas", "Alertas Creada Próximas a Vencer",
             "Alertas Vencimiento Total", "Alertas Vencen Mañana", "Alertas Ya Vencidos"
@@ -2158,10 +2196,11 @@ if uploaded_file is not None:
             f"• Entregados: {entregados} ({(entregados/total_pedidos*100):.1f}%)",
             f"• Devueltos: {devueltos} ({(devueltos/total_pedidos*100):.1f}%)",
             f"• Canceladas: {canceladas}",
-            f"• SLA Principal: {sla_principal:.1f}%",  # ACTUALIZADO
-            f"• Cumplimiento Tradicional: {cumplimiento_tradicional:.1f}%",
+            f"• SLA Principal: {sla_principal:.1f}%",
+            f"• Cumplimiento Entregas: {cumplimiento_tradicional:.1f}%",
             f"• Cumplimiento Gestión: {cumplimiento_gestion:.1f}%",
             f"• FADR (1er Intento): {fadr:.1f}%",
+            f"• Tasa Rechazo/Ausencia: {tasa_rechazo_ausencia:.1f}%",
             f"• Visitas en Tiempo: {visita_en_tiempo}",
             f"• Alertas Activas: {len(todas_alertas)}",
             f"• Alertas Creada Demoradas: {alertas_creada_criticas}",
