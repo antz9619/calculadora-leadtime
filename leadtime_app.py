@@ -198,7 +198,6 @@ amba_localidades = [
     "MARCOS PAZ",
     "GENERAL RODRIGUEZ",
     "PRESIDENTE PERON",
-    "CAÑUELAS",
     "SAN VICENTE",
     "BRANDSEN",
     "BERISSO",
@@ -222,7 +221,7 @@ amba_localidades = [
     "SAN CRISTOBAL",
     "BALVANERA",
     "MONTSERRAT",
-    "CAÑUELAS",
+    "CAÑUELAS, BUENOS AIRES",
     "ZARATE"
 ]
 
