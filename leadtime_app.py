@@ -221,7 +221,9 @@ amba_localidades = [
     "RETIRO",
     "SAN CRISTOBAL",
     "BALVANERA",
-    "MONTSERRAT"
+    "MONTSERRAT",
+    "CAÑUELAS, BUENOS AIRES",
+    "ZARATE, BUENOS AIRES"
 ]
 
 # --- EXCEPCIONES: localidades que NO son AMBA aunque tengan nombre similar ---
@@ -1231,7 +1233,7 @@ if uploaded_file is not None:
                 x=1
             )
         )
-        
+       
         # Agregar línea de referencia
         fig_semana_zona.add_hline(
             y=80, 
