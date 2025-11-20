@@ -222,8 +222,8 @@ amba_localidades = [
     "SAN CRISTOBAL",
     "BALVANERA",
     "MONTSERRAT",
-    "CAÑUELAS, BUENOS AIRES",
-    "ZARATE, BUENOS AIRES"
+    "CAÑUELAS",
+    "ZARATE"
 ]
 
 # --- EXCEPCIONES: localidades que NO son AMBA aunque tengan nombre similar ---
