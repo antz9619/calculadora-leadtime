@@ -58,7 +58,8 @@ def es_dia_festivo(fecha=None):
         (6, 20),  # Día de la Bandera
         (7, 9),   # Día de la Independencia
         (10, 12), # Día de la Raza
-        (11, 20), # Día de la Soberanía Nacional
+        (11, 21), # Día de la Soberanía Nacional
+        (11, 24), # Día de la Virgen
         (12, 8),  # Inmaculada Concepción
         (12, 25), # Navidad
         # Agregar más según necesidad
