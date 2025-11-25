@@ -246,33 +246,56 @@ excepciones_amba = [
 ]
 
 def determinar_zona(localidad_destino):
-    if pd.isna(localidad_destino):
+    """
+    Determina si una localidad pertenece a AMBA o INTERIOR
+    Maneja correctamente caracteres especiales como Ñ
+    """
+    if pd.isna(localidad_destino) or localidad_destino == "":
         return "INTERIOR"
-    # Normalizar: mayúsculas, sin espacios extra, sin tildes
-    localidad_destino = str(localidad_destino).upper().strip()
-    localidad_destino = ''.join(
-        c for c in unicodedata.normalize('NFD', localidad_destino)
-        if unicodedata.category(c) != 'Mn'
-    )
+    
+    localidad = str(localidad_destino).upper().strip()
+    
+    # Función auxiliar para normalizar para comparación
+    def normalizar_texto(texto):
+        return ''.join(
+            c for c in unicodedata.normalize('NFD', texto)
+            if unicodedata.category(c) != 'Mn'
+        ).replace("Ñ", "N")  # Preservar la Ñ convertida a N
+    
+    localidad_normalizada = normalizar_texto(localidad)
+    
     # 1. Verificar excepciones primero
     for excepcion in excepciones_amba:
-        if excepcion in localidad_destino:
+        if normalizar_texto(excepcion) in localidad_normalizada:
             return "INTERIOR"
-    # 2. Coincidencia exacta
+    
+    # 2. Verificar localidades AMBA
     for localidad_amba in amba_localidades:
-        if localidad_amba == localidad_destino:
+        amba_normalizada = normalizar_texto(localidad_amba)
+        
+        # Coincidencia exacta
+        if amba_normalizada == localidad_normalizada:
             return "AMBA"
-    # 3. Coincidencia parcial segura: empieza con nombre de AMBA + coma o espacio
-    for localidad_amba in amba_localidades:
-        if localidad_destino.startswith(localidad_amba):
-            resto = localidad_destino[len(localidad_amba):].strip()
+        
+        # Coincidencia que empiece con el nombre
+        if localidad_normalizada.startswith(amba_normalizada):
+            resto = localidad_normalizada[len(amba_normalizada):].strip()
             if resto.startswith(",") or resto.startswith(" ") or len(resto) == 0:
                 return "AMBA"
-    # 4. Palabras clave seguras
-    palabras_clave_amba = ["CAPITAL FEDERAL", "C.A.B.A.", "CABA", "CIUDAD AUTONOMA"]
-    for palabra in palabras_clave_amba:
-        if palabra in localidad_destino:
+        
+        # Coincidencia que contenga el nombre (para casos como "CAÑUELAS, BUENOS AIRES")
+        if amba_normalizada in localidad_normalizada:
+            # Verificar que no sea parte de una palabra más larga
+            patron = r'\b' + re.escape(amba_normalizada) + r'\b'
+            if re.search(patron, localidad_normalizada):
+                return "AMBA"
+    
+    # 3. Palabras clave para CABA
+    palabras_caba = ["CAPITAL FEDERAL", "C.A.B.A.", "CABA", "CIUDAD AUTONOMA"]
+    for palabra in palabras_caba:
+        if palabra in localidad:
             return "AMBA"
+    
     return "INTERIOR"
 
 # --- INTERFAZ STREAMLIT ---
