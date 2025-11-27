@@ -242,13 +242,16 @@ excepciones_amba = [
     "BAHIA BLANCA, BUENOS AIRES",
     "NECOCHEA, BUENOS AIRES",
     "OLAVARRIA, BUENOS AIRES",
-    "AZUL, BUENOS AIRES"
+    "AZUL, BUENOS AIRES",
+    "SAN MIGUEL DE TUCUMAN",
+    "SAN MIGUEL, TUCUMAN",
+    "TUCUMAN, TUCUMAN"
 ]
 
 def determinar_zona(localidad_destino):
     """
     Determina si una localidad pertenece a AMBA o INTERIOR
-    Maneja correctamente caracteres especiales como Ñ
+    Versión mejorada con manejo específico de provincias del interior
     """
     if pd.isna(localidad_destino) or localidad_destino == "":
         return "INTERIOR"
@@ -264,12 +267,63 @@ def determinar_zona(localidad_destino):
     
     localidad_normalizada = normalizar_texto(localidad)
     
-    # 1. Verificar excepciones primero
-    for excepcion in excepciones_amba:
-        if normalizar_texto(excepcion) in localidad_normalizada:
-            return "INTERIOR"
+    # --- DETECCIÓN MEJORADA: Primero verificar si es claramente del INTERIOR por la provincia ---
+    provincias_interior = [
+        "TUCUMAN", "CATAMARCA", "LA RIOJA", "SANTIAGO DEL ESTERO", "SALTA", 
+        "JUJUY", "MENDOZA", "SAN JUAN", "SAN LUIS", "CORDOBA", "SANTA FE", 
+        "ENTRE RIOS", "CORRIENTES", "MISIONES", "CHACO", "FORMOSA", "NEUQUEN", 
+        "RIO NEGRO", "CHUBUT", "SANTA CRUZ", "TIERRA DEL FUEGO", "LA PAMPA"
+    ]
     
-    # 2. Verificar localidades AMBA
+    # Si contiene claramente una provincia del interior, es INTERIOR
+    for provincia in provincias_interior:
+        provincia_normalizada = normalizar_texto(provincia)
+        if provincia_normalizada in localidad_normalizada:
+            # Verificar que no sea parte de una palabra más larga
+            patron_provincia = r'\b' + re.escape(provincia_normalizada) + r'\b'
+            if re.search(patron_provincia, localidad_normalizada):
+                return "INTERIOR"
+    
+    # 1. Verificar excepciones primero (CON MÁS CASOS DE TUCUMÁN)
+    excepciones_amba_actualizadas = [
+        "SAN MARTIN, SANTA FE",
+        "SAN MARTIN, MENDOZA", 
+        "SAN MARTIN, SAN JUAN",
+        "SAN MARTIN, CORRIENTES",
+        "SAN MARTIN, ENTRE RIOS",
+        "VILLA LIB. GENERAL SAN MARTIN",
+        "GENERAL SAN MARTIN",
+        "SAN MARTIN DE LOS ANDES",
+        "SAN MARTIN DE LA VEGA",
+        "TANDIL, BUENOS AIRES",
+        "MAR DEL PLATA, BUENOS AIRES",
+        "BAHIA BLANCA, BUENOS AIRES",
+        "NECOCHEA, BUENOS AIRES",
+        "OLAVARRIA, BUENOS AIRES",
+        "AZUL, BUENOS AIRES",
+        # NUEVAS EXCEPCIONES ESPECÍFICAS PARA TUCUMÁN
+        "SAN MIGUEL DE TUCUMAN",
+        "SAN MIGUEL, TUCUMAN",
+        "TUCUMAN, TUCUMAN",
+        "YERBA BUENA, TUCUMAN",
+        "TAFI VIEJO, TUCUMAN",
+        "LAS TALITAS, TUCUMAN",
+        "BANDA DEL RIO SALI, TUCUMAN"
+    ]
+    
+    for excepcion in excepciones_amba_actualizadas:
+        excepcion_normalizada = normalizar_texto(excepcion)
+        # Coincidencia más estricta para excepciones
+        if excepcion_normalizada == localidad_normalizada:
+            return "INTERIOR"
+        # También verificar si la excepción está contenida en la localidad
+        if excepcion_normalizada in localidad_normalizada:
+            # Usar regex para coincidencia de palabra completa
+            patron_excepcion = r'\b' + re.escape(excepcion_normalizada) + r'\b'
+            if re.search(patron_excepcion, localidad_normalizada):
+                return "INTERIOR"
+    
+    # 2. Verificar localidades AMBA (CON LÓGICA MÁS ESTRICTA)
     for localidad_amba in amba_localidades:
         amba_normalizada = normalizar_texto(localidad_amba)
         
@@ -277,18 +331,20 @@ def determinar_zona(localidad_destino):
         if amba_normalizada == localidad_normalizada:
             return "AMBA"
         
-        # Coincidencia que empiece con el nombre
+        # Coincidencia que empiece con el nombre PERO con verificaciones más estrictas
         if localidad_normalizada.startswith(amba_normalizada):
             resto = localidad_normalizada[len(amba_normalizada):].strip()
-            if resto.startswith(",") or resto.startswith(" ") or len(resto) == 0:
+            # Solo considerar AMBA si el resto está vacío o es una coma/espacio seguido de BUENOS AIRES
+            if len(resto) == 0:
                 return "AMBA"
-        
-        # Coincidencia que contenga el nombre (para casos como "CAÑUELAS, BUENOS AIRES")
-        if amba_normalizada in localidad_normalizada:
-            # Verificar que no sea parte de una palabra más larga
-            patron = r'\b' + re.escape(amba_normalizada) + r'\b'
-            if re.search(patron, localidad_normalizada):
-                return "AMBA"
+            if resto.startswith(",") or resto.startswith(" "):
+                resto_limpio = resto.lstrip(", ").upper()
+                # Solo es AMBA si especifica BUENOS AIRES o no especifica provincia
+                if "BUENOS AIRES" in resto_limpio or len(resto_limpio) == 0:
+                    return "AMBA"
+                # Si especifica otra provincia, es INTERIOR
+                if any(provincia in resto_limpio for provincia in provincias_interior):
+                    return "INTERIOR"
     
     # 3. Palabras clave para CABA
     palabras_caba = ["CAPITAL FEDERAL", "C.A.B.A.", "CABA", "CIUDAD AUTONOMA"]
@@ -296,6 +352,7 @@ def determinar_zona(localidad_destino):
         if palabra in localidad:
             return "AMBA"
     
+    # 4. Por defecto, es INTERIOR
     return "INTERIOR"
 
 # --- INTERFAZ STREAMLIT ---
