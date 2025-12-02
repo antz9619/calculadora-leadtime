@@ -390,14 +390,50 @@ if uploaded_file is not None:
     # Aplicar la función para crear la columna de semana calendario
     df['Semana Calendario'] = df['Fecha'].apply(obtener_semana_calendario)
 
-    # --- NUEVO: EXCLUIR LA AGENCIA DE DESTINO DE PAQUETERÍA INTERNA ---
-    # Filtrar para excluir la agencia (6100) Administracion IPE
+    # --- EXCLUSIONES CONSOLIDADAS ---
+    exclusion_messages = []
+
+    # Contador inicial
+    count_before_all = df.shape[0]
+
+    # 1. EXCLUIR LA AGENCIA DE DESTINO DE PAQUETERÍA INTERNA
     if 'Agencia destino' in df.columns:
-        df_original_count = df.shape[0]
+        count_before = df.shape[0]
         df = df[df['Agencia destino'] != "(6100) Administracion IPE"]
-        excluded_count = df_original_count - df.shape[0]
+        excluded_count = count_before - df.shape[0]
         if excluded_count > 0:
-            st.info(f"ℹ️ Se excluyeron {excluded_count} guías con destino a '(6100) Administracion IPE' (paquetería interna).")
+            exclusion_messages.append(f"{excluded_count} guías con destino a '(6100) Administracion IPE' (paquetería interna)")
+
+    # 2. EXCLUIR LOCALIDAD DESTINO ESPECÍFICA
+    if 'Loc' in df.columns:
+        count_before = df.shape[0]
+        df = df[~df['Loc'].str.upper().str.strip().eq("ADMINISTRACION BS AS, CAPITAL FEDERAL")]
+        excluded_count = count_before - df.shape[0]
+        if excluded_count > 0:
+            exclusion_messages.append(f"{excluded_count} guías con destino a 'ADMINISTRACION BS AS, CAPITAL FEDERAL'")
+
+    # 3. EXCLUIR GUIAS CON IMPORTE TOTAL = 0
+    if 'Importe total' in df.columns:
+        count_before = df.shape[0]
+        # Convertir a numérico
+        df['Importe total'] = pd.to_numeric(df['Importe total'], errors='coerce')
+        # Excluir guías con importe total igual a 0 o NaN
+        df = df[(df['Importe total'] != 0) & (df['Importe total'].notna())]
+        excluded_count = count_before - df.shape[0]
+        if excluded_count > 0:
+            exclusion_messages.append(f"{excluded_count} guías con Importe total igual a 0 o nulo")
+
+    # Mostrar mensaje consolidado
+    if exclusion_messages:
+        total_excluded = count_before_all - df.shape[0]
+        exclusion_text = f"ℹ️ Se excluyeron {total_excluded} guías en total:\n"
+        
+        for i, msg in enumerate(exclusion_messages, 1):
+            exclusion_text += f"  {i}. {msg}\n"
+        
+        exclusion_text += f"\n📊 Total restante para análisis: {df.shape[0]} guías"
+        
+        st.info(exclusion_text)                        
 
     # Determinar ZONA (AMBA o INTERIOR)
     df['ZONA'] = df['Loc'].apply(determinar_zona)
