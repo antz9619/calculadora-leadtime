@@ -355,6 +355,38 @@ def determinar_zona(localidad_destino):
     # 4. Por defecto, es INTERIOR
     return "INTERIOR"
 
+def limpiar_localidad(localidad):
+    """
+    Limpia las localidades eliminando partes duplicadas como 'EST.JUJUY', 'EST.', etc.
+    """
+    if pd.isna(localidad):
+        return localidad
+    
+    loc_str = str(localidad).upper().strip()
+    
+    # Patrones a limpiar
+    patrones_limpiar = [
+        r',\s*EST\.\s*[A-Z\s]*,\s*',  # ,EST. JUJUY,
+        r',\s*EST\.\s*,',  # ,EST.,
+        r',\s*EST\.',  # ,EST.
+        r',\s*EST\s*,',  # ,EST,
+        r'\s*EST\.\s*[A-Z\s]*,\s*',  # EST. JUJUY,
+        r'^\s*EST\.\s*',  # EST. al inicio
+    ]
+    
+    # Aplicar cada patrón
+    for patron in patrones_limpiar:
+        loc_str = re.sub(patron, ', ', loc_str, flags=re.IGNORECASE)
+    
+    # Limpiar comas duplicadas y espacios excesivos
+    loc_str = re.sub(r',\s*,', ',', loc_str)  # Comas duplicadas
+    loc_str = re.sub(r',\s*$', '', loc_str)  # Coma al final
+    loc_str = re.sub(r'^\s*,\s*', '', loc_str)  # Coma al inicio
+    loc_str = re.sub(r'\s+', ' ', loc_str)  # Espacios múltiples
+    loc_str = loc_str.strip().strip(',')  # Limpiar espacios y comas al inicio/fin
+    
+    return loc_str
+
 # --- INTERFAZ STREAMLIT ---
 st.set_page_config(page_title="Calculadora de Lead Time", layout="wide")
 st.title("📊 Calculadora de Lead Time - Indicadores Mejorados")
@@ -382,6 +414,10 @@ if uploaded_file is not None:
     # Renombrar columnas si es necesario
     if 'Localidad destino' in df.columns:
         df['Loc'] = df['Localidad destino']
+
+    # --- LIMPIAR LOCALIDADES: Eliminar partes duplicadas como EST.JUJUY, EST., etc. ---
+    if 'Loc' in df.columns:
+        df['Loc'] = df['Loc'].apply(limpiar_localidad)
 
     # Convertir columnas de fecha
     df['Fecha'] = pd.to_datetime(df['Fecha'], errors='coerce')
