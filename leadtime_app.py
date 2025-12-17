@@ -2203,7 +2203,7 @@ if uploaded_file is not None:
     ]
     if not todas_alertas.empty:
         columnas_todas = [
-            'Guia','Importe total', 'Cliente', 'Subcuenta', 'Destinatario', 'Tel Destinatario', 'Loc', 'ZONA', 'Visitas', 'Fecha último estado', 'Días Prometidos', 'Lead Time', 'Estado', 'Cumplimiento', 'Prioridad Alerta',
+            'Guia','Importe total', 'Cliente', 'Subcuenta', 'Destinatario', 'Tel Destinatario', 'Loc', 'Agencia destino', 'ZONA', 'Visitas', 'Fecha último estado', 'Días Prometidos', 'Lead Time', 'Estado', 'Cumplimiento', 'Prioridad Alerta',
             'Alerta Seguimiento Visitas', 'Alerta Una Visita Sin Seguimiento', 
             'Alerta Devolución', 'Alerta Redespacho', 
             'Alerta Pendiente Fuera Tiempo', 'Alerta Pago Pendiente',
