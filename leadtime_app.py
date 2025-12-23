@@ -61,6 +61,7 @@ def es_dia_festivo(fecha=None):
         (11, 21), # Día de la Soberanía Nacional
         (11, 24), # Día de la Virgen
         (12, 8),  # Inmaculada Concepción
+        (12, 24), # Pre Navidad
         (12, 25), # Navidad
         # Agregar más según necesidad
     ]
