@@ -359,49 +359,45 @@ def determinar_zona(localidad_destino):
 
 def limpiar_localidad(localidad):
     """
-    Versión simple basada en tu función original, pero con ajustes para casos específicos.
+    Limpia las localidades eliminando partes duplicadas como 'EST.JUJUY', 'EST.', etc.
     """
     if pd.isna(localidad):
         return localidad
     
     loc_str = str(localidad).upper().strip()
     
-    # Primero, manejar casos específicos directamente
-    if "MORENO, MARIANO ,EST.MORENO, BUENOS AIRES" == loc_str:
-        return "MORENO MARIANO, BUENOS AIRES"
+    # Primero, eliminar cualquier texto que comience con "EST." y vaya hasta la próxima coma
+    # Esto incluye casos como "EST.LIB.GRL.SAN MARTIN" y "EST.MORENO"
+    patron_est = r',\s*EST\.[^,]*'
+    loc_str = re.sub(patron_est, '', loc_str, flags=re.IGNORECASE)
     
-    if "SAN MARTIN ,EST.LIB.GRL.SAN MARTIN, MENDOZA" == loc_str:
-        return "SAN MARTIN, MENDOZA"
+    # También eliminar "EST," o "EST" solos
+    patron_est_solo = r',\s*EST[,\s]*'
+    loc_str = re.sub(patron_est_solo, ',', loc_str, flags=re.IGNORECASE)
     
-    # Aplicar los patrones de limpieza originales
-    patrones_limpiar = [
-        r',\s*EST\.\s*[A-Z\s]*,\s*',  # ,EST. JUJUY,
-        r',\s*EST\.\s*,',  # ,EST.,
-        r',\s*EST\.',  # ,EST.
-        r',\s*EST\s*,',  # ,EST,
-        r'\s*EST\.\s*[A-Z\s]*,\s*',  # EST. JUJUY,
-        r'^\s*EST\.\s*',  # EST. al inicio
-    ]
+    # Limpiar comas duplicadas y espacios excesivos
+    loc_str = re.sub(r',\s*,', ',', loc_str)  # Comas duplicadas
+    loc_str = re.sub(r',\s*$', '', loc_str)  # Coma al final
+    loc_str = re.sub(r'^\s*,\s*', '', loc_str)  # Coma al inicio
+    loc_str = re.sub(r'\s+', ' ', loc_str)  # Espacios múltiples
+    loc_str = loc_str.strip().strip(',')  # Limpiar espacios y comas al inicio/fin
     
-    for patron in patrones_limpiar:
-        loc_str = re.sub(patron, ', ', loc_str, flags=re.IGNORECASE)
-    
-    # Limpieza adicional para casos como "MORENO, MARIANO, BUENOS AIRES"
-    # Si después de limpiar quedan 3 partes separadas por comas, unir las primeras 2
-    partes = [p.strip() for p in loc_str.split(',') if p.strip()]
-    
-    if len(partes) == 3:
-        # Unir las dos primeras partes como nombre de localidad
-        nombre = f"{partes[0]} {partes[1]}"
-        provincia = partes[2]
-        loc_str = f"{nombre}, {provincia}"
-    
-    # Limpieza final
-    loc_str = re.sub(r',\s*,', ',', loc_str)
-    loc_str = re.sub(r',\s*$', '', loc_str)
-    loc_str = re.sub(r'^\s*,\s*', '', loc_str)
-    loc_str = re.sub(r'\s+', ' ', loc_str)
-    loc_str = loc_str.strip().strip(',')
+    # Ahora, manejar el caso específico de "MORENO, MARIANO, BUENOS AIRES"
+    # para convertirlo en "MORENO MARIANO, BUENOS AIRES"
+    if ',' in loc_str:
+        partes = [p.strip() for p in loc_str.split(',') if p.strip()]
+        
+        # Si hay 3 partes, es probable que sea un caso como "MORENO, MARIANO, BUENOS AIRES"
+        if len(partes) == 3:
+            # Unir las dos primeras partes sin coma
+            nombre_localidad = f"{partes[0]} {partes[1]}"
+            provincia = partes[2]
+            return f"{nombre_localidad}, {provincia}"
+        elif len(partes) == 2:
+            # Caso normal: "LOCALIDAD, PROVINCIA"
+            return f"{partes[0]}, {partes[1]}"
+        elif len(partes) == 1:
+            return partes[0]
     
     return loc_str
 
