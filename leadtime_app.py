@@ -359,64 +359,49 @@ def determinar_zona(localidad_destino):
 
 def limpiar_localidad(localidad):
     """
-    Limpia las localidades eliminando partes duplicadas como 'EST.JUJUY', 'EST.', etc.
-    Ahora incluye casos como 'EST.LIB.GRL.SAN MARTIN' y 'EST.MORENO'.
+    Versión simple basada en tu función original, pero con ajustes para casos específicos.
     """
     if pd.isna(localidad):
         return localidad
     
     loc_str = str(localidad).upper().strip()
     
-    # Patrones a limpiar - ACTUALIZADOS CON LOS NUEVOS CASOS
+    # Primero, manejar casos específicos directamente
+    if "MORENO, MARIANO ,EST.MORENO, BUENOS AIRES" == loc_str:
+        return "MORENO MARIANO, BUENOS AIRES"
+    
+    if "SAN MARTIN ,EST.LIB.GRL.SAN MARTIN, MENDOZA" == loc_str:
+        return "SAN MARTIN, MENDOZA"
+    
+    # Aplicar los patrones de limpieza originales
     patrones_limpiar = [
-        # Casos originales
         r',\s*EST\.\s*[A-Z\s]*,\s*',  # ,EST. JUJUY,
         r',\s*EST\.\s*,',  # ,EST.,
         r',\s*EST\.',  # ,EST.
         r',\s*EST\s*,',  # ,EST,
         r'\s*EST\.\s*[A-Z\s]*,\s*',  # EST. JUJUY,
         r'^\s*EST\.\s*',  # EST. al inicio
-        
-        # NUEVOS PATRONES PARA LOS CASOS ESPECÍFICOS
-        # Para casos como: SAN MARTIN ,EST.LIB.GRL.SAN MARTIN, MENDOZA
-        r',\s*EST\.LIB\.GRL\.SAN MARTIN\s*,',  # ,EST.LIB.GRL.SAN MARTIN,
-        r',\s*EST\.LIB\.GRL\.[A-Z\s]*,\s*',  # ,EST.LIB.GRL.[TEXTO],
-        
-        # Para casos como: MORENO, MARIANO ,EST.MORENO, BUENOS AIRES
-        r',\s*EST\.MORENO\s*,',  # ,EST.MORENO,
-        r',\s*EST\.[A-Z]+\s*,',  # ,EST.[CUALQUIER TEXTO EN MAYÚSCULAS],
-        
-        # Patrón general para cualquier "EST." seguido de texto y coma
-        r',\s*EST\.[A-Z\.\s]+,\s*',  # ,EST.[CUALQUIER COMBINACIÓN DE MAYÚSCULAS, PUNTOS Y ESPACIOS],
     ]
     
-    # Aplicar cada patrón
     for patron in patrones_limpiar:
         loc_str = re.sub(patron, ', ', loc_str, flags=re.IGNORECASE)
     
-    # Casos específicos adicionales
-    casos_especiales = [
-        # SAN MARTIN ,EST.LIB.GRL.SAN MARTIN, MENDOZA
-        (r'SAN MARTIN\s*,\s*EST\.LIB\.GRL\.SAN MARTIN\s*,\s*MENDOZA', 'SAN MARTIN, MENDOZA'),
-        (r'SAN MARTIN\s*,\s*EST\.LIB\.GRL\.[A-Z\s]+\s*,\s*[A-Z\s]+', lambda m: re.sub(r',\s*EST\.LIB\.GRL\.[A-Z\s]+,\s*', ', ', m.group())),
-        
-        # MORENO, MARIANO ,EST.MORENO, BUENOS AIRES
-        (r'MORENO,\s*MARIANO\s*,\s*EST\.MORENO\s*,\s*BUENOS AIRES', 'MORENO, MARIANO, BUENOS AIRES'),
-        (r'([A-Z]+),\s*([A-Z]+)\s*,\s*EST\.\1\s*,\s*', r'\1, \2, '),  # Cuando EST. repite la primera palabra
-    ]
+    # Limpieza adicional para casos como "MORENO, MARIANO, BUENOS AIRES"
+    # Si después de limpiar quedan 3 partes separadas por comas, unir las primeras 2
+    partes = [p.strip() for p in loc_str.split(',') if p.strip()]
     
-    for patron, reemplazo in casos_especiales:
-        if isinstance(reemplazo, str):
-            loc_str = re.sub(patron, reemplazo, loc_str, flags=re.IGNORECASE)
-        else:
-            loc_str = re.sub(patron, reemplazo, loc_str, flags=re.IGNORECASE)
+    if len(partes) == 3:
+        # Unir las dos primeras partes como nombre de localidad
+        nombre = f"{partes[0]} {partes[1]}"
+        provincia = partes[2]
+        loc_str = f"{nombre}, {provincia}"
     
-    # Limpiar comas duplicadas y espacios excesivos
-    loc_str = re.sub(r',\s*,+', ',', loc_str)  # Comas duplicadas
-    loc_str = re.sub(r'\s*,\s*$', '', loc_str)  # Coma al final
-    loc_str = re.sub(r'^\s*,\s*', '', loc_str)  # Coma al inicio
-    loc_str = re.sub(r'\s+', ' ', loc_str)  # Espacios múltiples
-    loc_str = loc_str.strip().strip(',')  # Limpiar espacios y comas al inicio/fin
+    # Limpieza final
+    loc_str = re.sub(r',\s*,', ',', loc_str)
+    loc_str = re.sub(r',\s*$', '', loc_str)
+    loc_str = re.sub(r'^\s*,\s*', '', loc_str)
+    loc_str = re.sub(r'\s+', ' ', loc_str)
+    loc_str = loc_str.strip().strip(',')
     
     return loc_str
 
