@@ -63,6 +63,7 @@ def es_dia_festivo(fecha=None):
         (12, 8),  # Inmaculada Concepción
         (12, 24), # Pre Navidad
         (12, 25), # Navidad
+        (12, 31), # Fin de Año
         # Agregar más según necesidad
     ]
     return (fecha.month, fecha.day) in festivos
