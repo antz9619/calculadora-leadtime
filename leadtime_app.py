@@ -366,40 +366,28 @@ def limpiar_localidad(localidad):
     
     loc_str = str(localidad).upper().strip()
     
-    # Primero, eliminar cualquier texto que comience con "EST." y vaya hasta la próxima coma
-    # Esto incluye casos como "EST.LIB.GRL.SAN MARTIN" y "EST.MORENO"
-    patron_est = r',\s*EST\.[^,]*'
-    loc_str = re.sub(patron_est, '', loc_str, flags=re.IGNORECASE)
+    # Eliminar cualquier texto que comience con "EST." y todo lo que siga hasta la próxima coma
+    loc_str = re.sub(r',\s*EST\.[^,]*', '', loc_str, flags=re.IGNORECASE)
     
-    # También eliminar "EST," o "EST" solos
-    patron_est_solo = r',\s*EST[,\s]*'
-    loc_str = re.sub(patron_est_solo, ',', loc_str, flags=re.IGNORECASE)
+    # Eliminar "EST," o "EST" solos
+    loc_str = re.sub(r',\s*EST[,\s]*', ',', loc_str, flags=re.IGNORECASE)
     
-    # Limpiar comas duplicadas y espacios excesivos
-    loc_str = re.sub(r',\s*,', ',', loc_str)  # Comas duplicadas
-    loc_str = re.sub(r',\s*$', '', loc_str)  # Coma al final
-    loc_str = re.sub(r'^\s*,\s*', '', loc_str)  # Coma al inicio
-    loc_str = re.sub(r'\s+', ' ', loc_str)  # Espacios múltiples
-    loc_str = loc_str.strip().strip(',')  # Limpiar espacios y comas al inicio/fin
+    # Dividir por comas y procesar
+    partes = [p.strip() for p in loc_str.split(',') if p.strip()]
     
-    # Ahora, manejar el caso específico de "MORENO, MARIANO, BUENOS AIRES"
-    # para convertirlo en "MORENO MARIANO, BUENOS AIRES"
-    if ',' in loc_str:
-        partes = [p.strip() for p in loc_str.split(',') if p.strip()]
-        
-        # Si hay 3 partes, es probable que sea un caso como "MORENO, MARIANO, BUENOS AIRES"
-        if len(partes) == 3:
-            # Unir las dos primeras partes sin coma
-            nombre_localidad = f"{partes[0]} {partes[1]}"
-            provincia = partes[2]
-            return f"{nombre_localidad}, {provincia}"
-        elif len(partes) == 2:
-            # Caso normal: "LOCALIDAD, PROVINCIA"
-            return f"{partes[0]}, {partes[1]}"
-        elif len(partes) == 1:
-            return partes[0]
+    if not partes:
+        return ""
     
-    return loc_str
+    # Si hay más de 2 partes, unir las primeras
+    if len(partes) > 2:
+        provincia = partes[-1]
+        nombre_localidad = ' '.join(partes[:-1])
+        nombre_localidad = re.sub(r'\s+', ' ', nombre_localidad).strip()
+        return f"{nombre_localidad}, {provincia}"
+    elif len(partes) == 2:
+        return f"{partes[0]}, {partes[1]}"
+    else:
+        return partes[0]
 
 # --- INTERFAZ STREAMLIT ---
 st.set_page_config(page_title="Calculadora de Lead Time", layout="wide")
