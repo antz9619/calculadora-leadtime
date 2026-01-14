@@ -225,7 +225,9 @@ amba_localidades = [
     "BALVANERA",
     "MONTSERRAT",
     "CAÑUELAS, BUENOS AIRES",
-    "ZARATE"
+    "ZARATE",
+    "LOMAS DEL MIRADOR , BUENOS AIRES",
+    "MORENO MARIANO, BUENOS AIRES"
 ]
 
 # --- EXCEPCIONES: localidades que NO son AMBA aunque tengan nombre similar ---
