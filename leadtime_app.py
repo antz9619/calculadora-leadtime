@@ -50,6 +50,8 @@ def es_dia_festivo(fecha=None):
     
     festivos = [
         (1, 1),   # Año Nuevo
+        (2, 16),  # Carnaval
+        (2, 17),  # Carnaval    
         (3, 24),  # Día Nacional de la Memoria
         (4, 2),   # Día del Veterano
         (5, 1),   # Día del Trabajo
