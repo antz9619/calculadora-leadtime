@@ -51,9 +51,11 @@ def es_dia_festivo(fecha=None):
     festivos = [
         (1, 1),   # Año Nuevo
         (2, 16),  # Carnaval
-        (2, 17),  # Carnaval    
+        (2, 17),  # Carnaval
+        (3, 23),  # Feriado Puente
         (3, 24),  # Día Nacional de la Memoria
         (4, 2),   # Día del Veterano
+        (4, 3),   # Viernes Santo
         (5, 1),   # Día del Trabajo
         (5, 25),  # Día de la Revolución de Mayo
         (6, 17),  # Paso a la Inmortalidad del Gral. Martín Güemes
