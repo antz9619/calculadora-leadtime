@@ -590,7 +590,7 @@ if uploaded_file is not None:
             if categoria == "AMBA cercano":
                 return 2
             elif categoria == "AMBA lejano":
-                return 3
+                return 5
             elif categoria == "Buenos Aires interior":
                 return 5
             else:
@@ -970,7 +970,7 @@ if uploaded_file is not None:
                 if categoria == "AMBA cercano":
                     dias_prometidos_correcto = 2
                 elif categoria == "AMBA lejano":
-                    dias_prometidos_correcto = 3
+                    dias_prometidos_correcto = 5
                 elif categoria == "Buenos Aires interior":
                     dias_prometidos_correcto = 5
                 else:
