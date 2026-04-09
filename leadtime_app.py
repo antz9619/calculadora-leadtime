@@ -1074,7 +1074,6 @@ if uploaded_file is not None:
 
     # Filtro por Subcuenta (DEPENDE del cliente seleccionado)
     if 'Subcuenta' in df_filtrado.columns:
-        # Usar df_filtrado en lugar de df
         subcuentas = sorted(df_filtrado['Subcuenta'].dropna().unique())
         subcuenta_seleccionada = st.sidebar.selectbox("Subcuenta", ["Todas"] + subcuentas)
     else:
@@ -1104,14 +1103,27 @@ if uploaded_file is not None:
     else:
         st.warning("⚠️ La columna 'ZONA' no existe. Se omitirá este filtro.")
         zona_seleccionada = "Todas"
-        
-    # Filtro por Categoría (dependiente de los filtros anteriores)
+
+    # Filtro por Categoría (opciones filtradas según ZONA seleccionada)
     if 'Categoria' in df_filtrado.columns:
-        categorias = sorted(df_filtrado['Categoria'].dropna().unique())
-        categoria_seleccionada = st.sidebar.selectbox("Categoría", ["Todas"] + categorias)
+        # Obtener todas las categorías disponibles en el DataFrame filtrado hasta ahora
+        todas_categorias = sorted(df_filtrado['Categoria'].dropna().unique())
+        
+        # Filtrar las opciones de categoría según la zona seleccionada
+        if zona_seleccionada == "AMBA":
+            categorias_filtradas = [c for c in todas_categorias if c.startswith("AMBA")]
+        elif zona_seleccionada == "INTERIOR":
+            categorias_filtradas = [c for c in todas_categorias if not c.startswith("AMBA")]
+        else:  # "Todas"
+            categorias_filtradas = todas_categorias
+        
+        categoria_seleccionada = st.sidebar.selectbox(
+            "Categoría",
+            ["Todas"] + categorias_filtradas
+        )
     else:
         st.warning("⚠️ La columna 'Categoria' no existe. Se omitirá este filtro.")
-        categoria_seleccionada = "Todas"            
+        categoria_seleccionada = "Todas"
 
     # Filtro por ED (dependiente de los filtros anteriores)
     if 'ED' in df_filtrado.columns:
@@ -1143,7 +1155,7 @@ if uploaded_file is not None:
     if 'ZONA' in df_final.columns and zona_seleccionada != "Todas":
         df_final = df_final[df_final['ZONA'] == zona_seleccionada]
     if 'Categoria' in df_final.columns and categoria_seleccionada != "Todas":
-        df_final = df_final[df_final['Categoria'] == categoria_seleccionada]        
+        df_final = df_final[df_final['Categoria'] == categoria_seleccionada]
     if 'ED' in df_final.columns and ed_seleccionada != "Todas":
         df_final = df_final[df_final['ED'] == ed_seleccionada]
     if 'Condición de venta' in df_final.columns and condicion_venta_seleccionada != "Todas":
@@ -1151,6 +1163,11 @@ if uploaded_file is not None:
 
     # Reemplazar el DataFrame original con el filtrado
     df = df_final
+
+    # --- NUEVA VERIFICACIÓN: Detener si no hay datos después de filtrar ---
+    if df.empty:
+        st.warning("⚠️ No hay datos que coincidan con los filtros seleccionados. Ajusta los filtros para ver resultados.")
+        st.stop()
 
     # --- NUEVA SECCIÓN: PORCENTAJE DE CUMPLIMIENTO POR SEMANA CON ALERTAS DE VARIACIÓN ---
     st.header("📈 Porcentaje de Cumplimiento por Semana con Alertas de Variación")
