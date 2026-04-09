@@ -563,6 +563,9 @@ if uploaded_file is not None:
     # NUEVO: Determinar Categoría detallada
     df['Categoria'] = df['Loc'].apply(determinar_categoria)
 
+    # Ajustar ZONA para que todas las subcategorías de AMBA tengan ZONA = "AMBA"
+    df.loc[df['Categoria'].str.startswith('AMBA', na=False), 'ZONA'] = 'AMBA'
+
     # Determinar días prometidos según ZONA, pero con excepción para Delivery Hero Riders
     def determinar_dias_prometidos_robusta(row):
         """
