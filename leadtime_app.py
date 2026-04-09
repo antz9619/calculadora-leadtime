@@ -446,7 +446,7 @@ def determinar_categoria(localidad_destino):
     for ciudad in amba_lejano_lista:
         if re.search(r'\b' + re.escape(normalizar(ciudad)) + r'\b', loc_norm):
             if es_buenos_aires or ciudad in ["CITY BELL", "TOLOSA", "LA PLATA"]:
-                return "AMBA lejano"
+                return "AMBA interior"
     
     # 3. AMBA cercano (resto del AMBA)
     amba_cercano_lista = [
@@ -589,7 +589,7 @@ if uploaded_file is not None:
             # Regla general basada en Categoria
             if categoria == "AMBA cercano":
                 return 2
-            elif categoria == "AMBA lejano":
+            elif categoria == "AMBA interior":
                 return 5
             elif categoria == "Buenos Aires interior":
                 return 5
@@ -969,7 +969,7 @@ if uploaded_file is not None:
             else:
                 if categoria == "AMBA cercano":
                     dias_prometidos_correcto = 2
-                elif categoria == "AMBA lejano":
+                elif categoria == "AMBA interior":
                     dias_prometidos_correcto = 5
                 elif categoria == "Buenos Aires interior":
                     dias_prometidos_correcto = 5
@@ -1899,6 +1899,68 @@ if uploaded_file is not None:
     }
     resumen_df = pd.DataFrame(resumen_data)
     st.dataframe(resumen_df, use_container_width=True)
+
+        # --- NUEVA SECCIÓN: DESGLOSE AMBA CERCANO / AMBA INTERIOR ---
+    st.header("📍 Desglose AMBA: Cercano vs Interior")
+    
+    # Filtrar solo registros de categoría AMBA y excluir canceladas
+    df_amba = df[(df['Categoria'].str.startswith('AMBA', na=False)) & (df['Cumplimiento'] != "Cancelada")]
+    
+    if not df_amba.empty:
+        # Calcular métricas para AMBA cercano
+        df_cercano = df_amba[df_amba['Categoria'] == 'AMBA cercano']
+        total_cercano = len(df_cercano)
+        en_tiempo_cercano = df_cercano[df_cercano['Cumplimiento'].isin([
+            "Entregada - En Tiempo", 
+            "Entregada - En Tiempo (PD: Pago Pendiente)"
+        ])].shape[0]
+        pct_cercano = (en_tiempo_cercano / total_cercano * 100) if total_cercano > 0 else 0
+        
+        # Calcular métricas para AMBA interior
+        df_interior_amba = df_amba[df_amba['Categoria'] == 'AMBA interior']
+        total_interior_amba = len(df_interior_amba)
+        en_tiempo_interior_amba = df_interior_amba[df_interior_amba['Cumplimiento'].isin([
+            "Entregada - En Tiempo", 
+            "Entregada - En Tiempo (PD: Pago Pendiente)"
+        ])].shape[0]
+        pct_interior_amba = (en_tiempo_interior_amba / total_interior_amba * 100) if total_interior_amba > 0 else 0
+
+        # Crear DataFrame para la tabla
+        data_amba = {
+            "Categoría": ["AMBA Cercano", "AMBA Interior"],
+            "Total Gestionables": [total_cercano, total_interior_amba],
+            "Entregas a Tiempo": [en_tiempo_cercano, en_tiempo_interior_amba],
+            "% Cumplimiento": [f"{pct_cercano:.1f}%", f"{pct_interior_amba:.1f}%"],
+            "Días Prometidos": ["2 días", "5 días"]
+        }
+        df_amba_display = pd.DataFrame(data_amba)
+        
+        # Mostrar tabla
+        st.dataframe(df_amba_display, use_container_width=True)
+        
+        # Gráfico de barras comparativo
+        fig_amba = px.bar(
+            df_amba_display,
+            x="Categoría",
+            y="Total Gestionables",
+            text="Total Gestionables",
+            color="Categoría",
+            title="Volumen de envíos AMBA por subcategoría",
+            color_discrete_map={"AMBA Cercano": "#28a745", "AMBA Interior": "#fd7e14"}
+        )
+        fig_amba.update_traces(texttemplate='%{text}', textposition='outside')
+        st.plotly_chart(fig_amba, use_container_width=True)
+        
+        # Métricas en columnas
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric("🎯 Cumplimiento AMBA Cercano", f"{pct_cercano:.1f}%", 
+                     delta=f"{en_tiempo_cercano} de {total_cercano} pedidos")
+        with col2:
+            st.metric("🎯 Cumplimiento AMBA Interior", f"{pct_interior_amba:.1f}%", 
+                     delta=f"{en_tiempo_interior_amba} de {total_interior_amba} pedidos")
+    else:
+        st.info("No hay datos de AMBA para mostrar con los filtros actuales.")
 
     # --- GRÁFICO DE CUMPLIMIENTO MEJORADO ---
     categorias_mejoradas = [
