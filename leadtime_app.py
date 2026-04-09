@@ -496,27 +496,25 @@ if uploaded_file is not None:
 
     # Determinar días prometidos según ZONA, pero con excepción para Delivery Hero Riders
     def determinar_dias_prometidos_robusta(row):
-        """
-        Versión más robusta para determinar días prometidos
-        """
         try:
-            # Normalizar y limpiar los valores
             cliente = str(row.get('Cliente', '')).strip().upper()
             subcuenta = str(row.get('Subcuenta', '')).strip().upper()
             zona = str(row.get('ZONA', '')).strip()
-            
-            # Caso RIDERS (más flexible en la comparación)
-            if ("DELIVERY HERO" in cliente and "RIDERS" in subcuenta):
+
+            # NUEVA EXCEPCIÓN: Delivery Hero E-Commerce - PedidosYa POS en AMBA → 2 días
+            if ("DELIVERY HERO" in cliente and "E-COMMERCE" in cliente and 
+                "PEDIDOSYA" in subcuenta and "POS" in subcuenta and 
+                zona == "AMBA"):
+                return 2
+
+            # Excepción RIDERS: siempre 3 días
+            if "DELIVERY HERO" in cliente and "RIDERS" in subcuenta:
                 return 3
-            
-            # Caso normal
-            if zona == "AMBA":
-                return 3
-            else:
-                return 5
-                
-        except Exception as e:
-            # Si hay error, retornar valor por defecto
+
+            # Comportamiento normal
+            return 3 if zona == "AMBA" else 5
+
+        except Exception:
             return 5
 
     # Prueba temporal con la versión robusta
@@ -870,15 +868,15 @@ if uploaded_file is not None:
         - El pedido está pendiente
         - Y vence mañana (Lead Time == Días Prometidos - 1) -> "Vence mañana"
         - O ya está vencido (Lead Time >= Días Prometidos) -> "Ya vencido"
-        - Considera la excepción de RIDERS (siempre 3 días sin importar zona)
-        - CORRECCIÓN: Verifica si "mañana" es día hábil
+        - Considera excepciones: RIDERS (3 días) y PEDIDOSYA POS en AMBA (2 días)
+        - Verifica si "mañana" es día hábil
         """
         try:
             estado = str(row.get('Estado', '')).lower()
             cumplimiento = str(row.get('Cumplimiento', ''))
             lead_time = row.get('Lead Time')
-            cliente = str(row.get('Cliente', '')).strip()
-            subcuenta = str(row.get('Subcuenta', '')).strip()
+            cliente = str(row.get('Cliente', '')).strip().upper()      # <-- Convertir a upper aquí
+            subcuenta = str(row.get('Subcuenta', '')).strip().upper()  # <-- Convertir a upper aquí
             zona = row.get('ZONA', '')
             fecha_creacion = row.get('Fecha')
             
@@ -888,9 +886,13 @@ if uploaded_file is not None:
                 "devuelto" in cumplimiento.lower()):
                 return ""
 
-            # Calcular días prometidos CORRECTAMENTE (igual que en determinar_dias_prometidos)
-            if cliente == "DELIVERY HERO E-COMMERCE S.A." and subcuenta == "RIDERS":
+            # Calcular días prometidos con la NUEVA lógica de excepciones
+            if "DELIVERY HERO" in cliente and "RIDERS" in subcuenta:
                 dias_prometidos_correcto = 3  # Excepción RIDERS: siempre 3 días
+            elif ("DELIVERY HERO" in cliente and "E-COMMERCE" in cliente and 
+                "PEDIDOSYA" in subcuenta and "POS" in subcuenta and 
+                zona == "AMBA"):
+                dias_prometidos_correcto = 2  # NUEVA EXCEPCIÓN: 2 días en AMBA
             else:
                 dias_prometidos_correcto = 3 if zona == "AMBA" else 5  # Comportamiento normal
 
