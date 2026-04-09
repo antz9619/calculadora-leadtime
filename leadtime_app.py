@@ -2336,7 +2336,7 @@ if uploaded_file is not None:
         'Cliente', 'Subcuenta', 'Agencia origen', 'Agencia destino', 'Condición de venta',
         'Fecha', 'Semana Calendario', 'Porcentaje Cumplimiento Semana', 
         'Alerta Variación Semana', 'Variación vs Semana Anterior',  # Nuevas columnas
-        'Fecha último estado', 'Estado', 'Visitas', 'ED', 'Loc', 'ZONA', 'Categoria', 'Producto',
+        'Fecha último estado', 'Estado', 'Visitas', 'ED', 'Loc', 'ZONA', 'Categoría', 'Producto',
         'Lead Time', 'Días Prometidos',
         'Cumplimiento', 'Días Restantes', 'Prioridad Alerta',
         'Alerta Seguimiento Visitas', 'Alerta Una Visita Sin Seguimiento',
