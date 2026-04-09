@@ -2351,6 +2351,10 @@ if uploaded_file is not None:
 
     # --- DESCARGAS GENERALES ACTUALIZADAS ---
     st.header("📥 Descargas Generales Actualizadas")
+
+    # ✅ RENOMBRAR COLUMNA PARA COMPATIBILIDAD CON LA MACRO VBA
+    if 'Categoria' in df.columns:
+        df.rename(columns={'Categoria': 'Categoría'}, inplace=True)
     
     # Preparar datos para el Excel de estadísticas
     alertas_vencimiento_count = len(df[df['Alerta Vencimiento Mañana'].isin(["Vence mañana", "Ya vencido"])])
