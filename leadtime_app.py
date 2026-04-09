@@ -229,7 +229,7 @@ amba_localidades = [
     "BALVANERA",
     "MONTSERRAT",
     "CAÑUELAS, BUENOS AIRES",
-    "ZARATE",
+    "ZARATE, BUENOS AIRES",
     "LOMAS DEL MIRADOR , BUENOS AIRES",
     "MORENO MARIANO, BUENOS AIRES"
 ]
@@ -407,6 +407,72 @@ def limpiar_localidad(localidad):
     
     return loc_str
 
+def determinar_categoria(localidad_destino):
+    """
+    Clasifica una localidad en:
+    - AMBA cercano
+    - AMBA lejano
+    - Buenos Aires interior
+    - Interior
+    """
+    if pd.isna(localidad_destino) or localidad_destino == "":
+        return "Interior"
+    
+    loc_str = str(localidad_destino).upper().strip()
+    
+    def normalizar(texto):
+        return ''.join(c for c in unicodedata.normalize('NFD', texto) if unicodedata.category(c) != 'Mn')
+    
+    loc_norm = normalizar(loc_str)
+    
+    # 1. Provincias del interior (excluyendo Buenos Aires)
+    provincias_interior = [
+        "TUCUMAN", "CATAMARCA", "LA RIOJA", "SANTIAGO DEL ESTERO", "SALTA", 
+        "JUJUY", "MENDOZA", "SAN JUAN", "SAN LUIS", "CORDOBA", "SANTA FE", 
+        "ENTRE RIOS", "CORRIENTES", "MISIONES", "CHACO", "FORMOSA", "NEUQUEN", 
+        "RIO NEGRO", "CHUBUT", "SANTA CRUZ", "TIERRA DEL FUEGO", "LA PAMPA"
+    ]
+    for prov in provincias_interior:
+        if re.search(r'\b' + re.escape(normalizar(prov)) + r'\b', loc_norm):
+            return "Interior"
+    
+    es_buenos_aires = "BUENOS AIRES" in loc_norm
+    
+    # 2. Lista específica de AMBA lejano
+    amba_lejano_lista = [
+        "GENERAL RODRIGUEZ", "CITY BELL", "TOLOSA", "CAÑUELAS", "LA PLATA",
+        "PILAR", "GENERAL LAS HERAS", "BRANDSEN", "LUJAN", "CAMPANA", "ZARATE"
+    ]
+    for ciudad in amba_lejano_lista:
+        if re.search(r'\b' + re.escape(normalizar(ciudad)) + r'\b', loc_norm):
+            if es_buenos_aires or ciudad in ["CITY BELL", "TOLOSA", "LA PLATA"]:
+                return "AMBA lejano"
+    
+    # 3. AMBA cercano (resto del AMBA)
+    amba_cercano_lista = [
+        "CIUDAD AUTONOMA BUENOS AIRES", "CAPITAL FEDERAL", "CABA",
+        "AVELLANEDA", "LANUS", "LOMAS DE ZAMORA", "LA MATANZA", "MORON",
+        "SAN MARTIN", "VICENTE LOPEZ", "SAN ISIDRO", "TRES DE FEBRERO",
+        "MORENO", "HURLINGHAM", "ITUZAINGO", "BERAZATEGUI", "FLORENCIO VARELA",
+        "QUILMES", "ALMIRANTE BROWN", "ESTEBAN ECHEVERRIA", "EZEIZA",
+        "SAN FERNANDO", "TIGRE", "SAN MIGUEL", "MALVINAS ARGENTINAS",
+        "JOSE C. PAZ", "ESCOBAR", "MERLO", "MARCOS PAZ", "PRESIDENTE PERON",
+        "SAN VICENTE", "BERISSO", "ENSENADA", "MUNRO", "SAAVEDRA", "FLORES",
+        "ALMAGRO", "VILLA URQUIZA", "COLEGIALES", "PALERMO", "RECOLETA",
+        "BELGRANO", "NUÑEZ", "CABALLITO", "BOEDO", "SAN TELMO", "CONSTITUCION",
+        "RETIRO", "SAN CRISTOBAL", "BALVANERA", "MONTSERRAT",
+        "LOMAS DEL MIRADOR", "MORENO MARIANO"
+    ]
+    for ciudad in amba_cercano_lista:
+        if re.search(r'\b' + re.escape(normalizar(ciudad)) + r'\b', loc_norm):
+            return "AMBA cercano"
+    
+    # 4. Buenos Aires interior
+    if es_buenos_aires:
+        return "Buenos Aires interior"
+    
+    return "Interior"
+
 # --- INTERFAZ STREAMLIT ---
 st.set_page_config(page_title="Calculadora de Lead Time", layout="wide")
 st.title("📊 Calculadora de Lead Time - Indicadores Mejorados")
@@ -491,30 +557,43 @@ if uploaded_file is not None:
         
         st.info(exclusion_text)                        
 
-    # Determinar ZONA (AMBA o INTERIOR)
+    # Determinar ZONA (AMBA o INTERIOR) - se mantiene igual
     df['ZONA'] = df['Loc'].apply(determinar_zona)
+
+    # NUEVO: Determinar Categoría detallada
+    df['Categoria'] = df['Loc'].apply(determinar_categoria)
 
     # Determinar días prometidos según ZONA, pero con excepción para Delivery Hero Riders
     def determinar_dias_prometidos_robusta(row):
+        """
+        Determina los días prometidos según:
+        - RIDERS: siempre 3 días.
+        - Resto: según la columna 'Categoria':
+            * AMBA cercano -> 2 días
+            * AMBA lejano -> 3 días
+            * Buenos Aires interior -> 5 días
+            * Interior -> 5 días
+        """
         try:
             cliente = str(row.get('Cliente', '')).strip().upper()
             subcuenta = str(row.get('Subcuenta', '')).strip().upper()
-            zona = str(row.get('ZONA', '')).strip()
+            categoria = str(row.get('Categoria', '')).strip()
 
-            # NUEVA EXCEPCIÓN: Delivery Hero E-Commerce - PedidosYa POS en AMBA → 2 días
-            if ("DELIVERY HERO" in cliente and "E-COMMERCE" in cliente and 
-                "PEDIDOSYA" in subcuenta and "POS" in subcuenta and 
-                zona == "AMBA"):
-                return 2
-
-            # Excepción RIDERS: siempre 3 días
+            # Excepción RIDERS
             if "DELIVERY HERO" in cliente and "RIDERS" in subcuenta:
                 return 3
 
-            # Comportamiento normal
-            return 3 if zona == "AMBA" else 5
+            # Regla general basada en Categoria
+            if categoria == "AMBA cercano":
+                return 2
+            elif categoria == "AMBA lejano":
+                return 3
+            elif categoria == "Buenos Aires interior":
+                return 5
+            else:
+                return 5  # Interior u otros
 
-        except Exception:
+        except Exception as e:
             return 5
 
     # Prueba temporal con la versión robusta
@@ -864,68 +943,60 @@ if uploaded_file is not None:
     # --- NUEVA ALERTA GENERAL: VENCIMIENTO MAÑANA PARA TODOS LOS CLIENTES (CORREGIDA CON PUENTES) ---
     def alerta_vencimiento_mañana(row):
         """
-        Genera una alerta si:
-        - El pedido está pendiente
-        - Y vence mañana (Lead Time == Días Prometidos - 1) -> "Vence mañana"
-        - O ya está vencido (Lead Time >= Días Prometidos) -> "Ya vencido"
-        - Considera excepciones: RIDERS (3 días) y PEDIDOSYA POS en AMBA (2 días)
-        - Verifica si "mañana" es día hábil
+        Genera alerta de vencimiento usando la misma lógica de días prometidos.
         """
         try:
             estado = str(row.get('Estado', '')).lower()
             cumplimiento = str(row.get('Cumplimiento', ''))
             lead_time = row.get('Lead Time')
-            cliente = str(row.get('Cliente', '')).strip().upper()      # <-- Convertir a upper aquí
-            subcuenta = str(row.get('Subcuenta', '')).strip().upper()  # <-- Convertir a upper aquí
-            zona = row.get('ZONA', '')
+            cliente = str(row.get('Cliente', '')).strip().upper()
+            subcuenta = str(row.get('Subcuenta', '')).strip().upper()
+            categoria = str(row.get('Categoria', '')).strip()
             fecha_creacion = row.get('Fecha')
             
-            # Solo aplicar a pedidos pendientes (no entregados, no cancelados, no devueltos)
+            # Solo aplicar a pedidos pendientes
             if ("entregada" in estado or 
                 "cancelada" in estado or 
                 "devuelto" in cumplimiento.lower()):
                 return ""
 
-            # Calcular días prometidos con la NUEVA lógica de excepciones
+            # Calcular días prometidos (misma lógica que en determinar_dias_prometidos_robusta)
             if "DELIVERY HERO" in cliente and "RIDERS" in subcuenta:
-                dias_prometidos_correcto = 3  # Excepción RIDERS: siempre 3 días
-            elif ("DELIVERY HERO" in cliente and "E-COMMERCE" in cliente and 
-                "PEDIDOSYA" in subcuenta and "POS" in subcuenta and 
-                zona == "AMBA"):
-                dias_prometidos_correcto = 2  # NUEVA EXCEPCIÓN: 2 días en AMBA
+                dias_prometidos_correcto = 3
             else:
-                dias_prometidos_correcto = 3 if zona == "AMBA" else 5  # Comportamiento normal
+                if categoria == "AMBA cercano":
+                    dias_prometidos_correcto = 2
+                elif categoria == "AMBA lejano":
+                    dias_prometidos_correcto = 3
+                elif categoria == "Buenos Aires interior":
+                    dias_prometidos_correcto = 5
+                else:
+                    dias_prometidos_correcto = 5
 
             # Verificar condiciones de vencimiento
             if (pd.notna(lead_time) and isinstance(lead_time, (int, float)) and
                 pd.notna(fecha_creacion)):
                 
-                # Ya vencido
                 if lead_time >= dias_prometidos_correcto:
                     return "Ya vencido"
                 
-                # Vence mañana - PERO VERIFICAR SI MAÑANA ES DÍA HÁBIL
                 elif lead_time == dias_prometidos_correcto - 1:
                     fecha_actual = obtener_fecha_actual_argentina().date()
                     fecha_manana = fecha_actual + timedelta(days=1)
                     
-                    # Verificar si "mañana" es día hábil
                     if es_dia_habil(fecha_manana):
                         return "Vence mañana"
                     else:
-                        # Si mañana NO es hábil, buscar el próximo día hábil
                         proximo_dia_habil = fecha_manana
                         while not es_dia_habil(proximo_dia_habil):
                             proximo_dia_habil += timedelta(days=1)
                         
-                        # Calcular días hábiles hasta el próximo día hábil
                         dias_hasta_proximo_habil = calcular_dias_habiles(fecha_actual, proximo_dia_habil)
                         
                         if dias_hasta_proximo_habil == 1:
                             return f"Vence {proximo_dia_habil.strftime('%d/%m')}"
                         else:
                             return f"Vence en {dias_hasta_proximo_habil} días"
-                    
             return ""
         except Exception as e:
             return ""
@@ -2255,7 +2326,7 @@ if uploaded_file is not None:
         'Cliente', 'Subcuenta', 'Agencia origen', 'Agencia destino', 'Condición de venta',
         'Fecha', 'Semana Calendario', 'Porcentaje Cumplimiento Semana', 
         'Alerta Variación Semana', 'Variación vs Semana Anterior',  # Nuevas columnas
-        'Fecha último estado', 'Estado', 'Visitas', 'ED', 'Loc', 'ZONA', 'Producto',
+        'Fecha último estado', 'Estado', 'Visitas', 'ED', 'Loc', 'ZONA', 'Categoria', 'Producto',
         'Lead Time', 'Días Prometidos',
         'Cumplimiento', 'Días Restantes', 'Prioridad Alerta',
         'Alerta Seguimiento Visitas', 'Alerta Una Visita Sin Seguimiento',
