@@ -487,6 +487,7 @@ if uploaded_file is not None:
         if "cancelada" in estado:
             return "Cancelada"
 
+        # --- CLIENTES EVENTUAL: detección por destinatario ---
         if row.get('Cliente', '') == "EVENTUAL":
             destinatario = ""
             if 'Destinatario' in row.index:
@@ -501,8 +502,15 @@ if uploaded_file is not None:
             if destinatario and any(palabra in destinatario for palabra in palabras_devolucion):
                 return "Devuelto"
 
-        if "devolución informada" in estado or "devolucion informada" in estado or "devuelta" in estado:
-            return "Devuelto"
+        # --- DEVOLUCIONES POR ESTADO (APLICA A TODOS LOS CLIENTES) ---
+        if ("devolución a remitente" in estado or "devuelta" in estado or
+            "devolución informada" in estado or "devolucion informada" in estado):
+            # Si hay al menos una visita y el lead time está dentro de los días prometidos
+            if (visitas > 0 and pd.notna(row['Lead Time']) and 
+                row['Lead Time'] <= row['Días Prometidos']):
+                return "Devuelto - Cumplido (Visita a Tiempo)"
+            else:
+                return "Devuelto"
 
         if ed == "NO" and "esperando retiro" in estado:
             if pd.notna(row['Lead Time']) and row['Lead Time'] <= row['Días Prometidos']:
@@ -556,7 +564,7 @@ if uploaded_file is not None:
     df['Cumplimiento'] = df.apply(determinar_cumplimiento_mejorado, axis=1)
 
     # --- CATEGORÍAS EXCLUIDAS DEL SLA ---
-    EXCLUIDOS_SLA = ["Cancelada", "Excluido - Logística Inversa POS"]
+    EXCLUIDOS_SLA = ["Cancelada", "Excluido - Logística Inversa POS", "Devuelto - Cumplido (Visita a Tiempo)"]
 
     def calcular_dias_restantes(row):
         cumplimiento = str(row['Cumplimiento'])
@@ -1283,6 +1291,7 @@ if uploaded_file is not None:
     total_pedidos = df[~df['Cumplimiento'].isin(EXCLUIDOS_SLA)].shape[0]
     entregados = df[df['Cumplimiento'].str.startswith("Entregada")].shape[0]
     devueltos = df[df['Cumplimiento'] == "Devuelto"].shape[0]
+    devuelto_cumplido_visita = df[df['Cumplimiento'] == "Devuelto - Cumplido (Visita a Tiempo)"].shape[0]
     canceladas = df[df['Cumplimiento'] == "Cancelada"].shape[0]
     logistica_inversa_pos_count = df[df['Cumplimiento'] == "Excluido - Logística Inversa POS"].shape[0]
     pendientes_reales = total_pedidos - entregados - devueltos
@@ -1295,6 +1304,7 @@ if uploaded_file is not None:
     fuera_tiempo = df[df['Cumplimiento'] == "Entregada - Fuera de Tiempo"].shape[0]
     fuera_tiempo_pd = df[df['Cumplimiento'] == "Entregada - Fuera de Tiempo (PD: Pago Pendiente)"].shape[0]
     devuelto_count = devueltos
+    devuelto_sin_cumplir = devuelto_count - devuelto_cumplido_visita
     pendiente_en_tiempo = df[df['Cumplimiento'] == "Pendiente - En Tiempo"].shape[0]
     pendiente_fuera_tiempo = df[df['Cumplimiento'] == "Pendiente - Fuera de Tiempo"].shape[0]
     pendiente_ultimo_dia = df[df['Cumplimiento'] == "Pendiente - Último Día"].shape[0]
@@ -1378,6 +1388,8 @@ if uploaded_file is not None:
             " - Fuera de Tiempo",
             " - Fuera de Tiempo (PD)",
             "DEVUELTOS",
+            " - Devuelto Cumplido (visita a tiempo)",
+            " - Devuelto (sin visita / fuera de plazo)",
             "CANCELADAS",
             "EXCLUIDOS - Logística Inversa POS",
             "PENDIENTES CON VISITA",
@@ -1392,7 +1404,10 @@ if uploaded_file is not None:
         ],
         "Cantidad": [
             total_pedidos, entregados, en_tiempo, en_tiempo_pd,
-            fuera_tiempo, fuera_tiempo_pd, devuelto_count, canceladas,
+            fuera_tiempo, fuera_tiempo_pd, devuelto_count,
+            devuelto_cumplido_visita,
+            devuelto_count - devuelto_cumplido_visita,
+            canceladas,
             logistica_inversa_pos_count,
             visita_en_tiempo + visita_fuera_tiempo,
             visita_en_tiempo, visita_fuera_tiempo,
@@ -1408,6 +1423,8 @@ if uploaded_file is not None:
             f"{(fuera_tiempo/total_pedidos*100):.1f}%" if total_pedidos > 0 else "0%",
             f"{(fuera_tiempo_pd/total_pedidos*100):.1f}%" if total_pedidos > 0 else "0%",
             f"{(devuelto_count/total_pedidos*100):.1f}%" if total_pedidos > 0 else "0%",
+            f"{(devuelto_cumplido_visita/total_pedidos*100):.1f}%" if total_pedidos > 0 else "0%",
+            f"{((devuelto_count - devuelto_cumplido_visita)/total_pedidos*100):.1f}%" if total_pedidos > 0 else "0%",
             f"{(canceladas/(total_pedidos + canceladas + logistica_inversa_pos_count)*100):.1f}%" if (total_pedidos + canceladas + logistica_inversa_pos_count) > 0 else "0%",
             f"{(logistica_inversa_pos_count/(total_pedidos + canceladas + logistica_inversa_pos_count)*100):.1f}%" if (total_pedidos + canceladas + logistica_inversa_pos_count) > 0 else "0%",
             f"{((visita_en_tiempo + visita_fuera_tiempo)/total_pedidos*100):.1f}%" if total_pedidos > 0 else "0%",
@@ -1475,7 +1492,8 @@ if uploaded_file is not None:
         "Entregada - En Tiempo (PD)",
         "Entregada - Fuera de Tiempo",
         "Entregada - Fuera de Tiempo (PD)",
-        "Devuelto",
+        "Devuelto - Cumplido (Visita a Tiempo)",
+        "Devuelto (sin visita / fuera de plazo)",
         "Cancelada",
         "Excluido - Logística Inversa POS",
         "Pendiente - Visita en Tiempo",
@@ -1486,7 +1504,8 @@ if uploaded_file is not None:
     ]
     valores_mejorados = [
         en_tiempo, en_tiempo_pd, fuera_tiempo, fuera_tiempo_pd,
-        devuelto_count, canceladas, logistica_inversa_pos_count,
+        devuelto_cumplido_visita, devuelto_sin_cumplir, # ← en este orden
+        canceladas, logistica_inversa_pos_count,
         visita_en_tiempo, visita_fuera_tiempo,
         pendiente_en_tiempo, pendiente_ultimo_dia, pendiente_fuera_tiempo
     ]
@@ -1500,7 +1519,8 @@ if uploaded_file is not None:
             "Entregada - En Tiempo (PD)": "#2ecc71",
             "Entregada - Fuera de Tiempo": "#dc3545",
             "Entregada - Fuera de Tiempo (PD)": "#e74c3c",
-            "Devuelto": "#9b59b6",
+            "Devuelto - Cumplido (Visita a Tiempo)": "#8e44ad",
+            "Devuelto (sin visita / fuera de plazo)": "#9b59b6",
             "Cancelada": "#95a5a6",
             "Excluido - Logística Inversa POS": "#17a2b8",
             "Pendiente - Visita en Tiempo": "#3498db",
