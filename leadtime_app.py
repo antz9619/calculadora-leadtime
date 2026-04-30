@@ -503,13 +503,13 @@ if uploaded_file is not None:
                 return "Devuelto"
 
         # --- DEVOLUCIONES POR ESTADO (APLICA A TODOS LOS CLIENTES) ---
-            if ("devolución a remitente" in estado or "devuelta" in estado or
-                "devolución informada" in estado or "devolucion informada" in estado):
-                # Cumplido si hubo al menos una visita, sin importar los días
-                if visitas > 0:
-                    return "Devuelto - Cumplido (Visita a Tiempo)"
-                else:
-                    return "Devuelto"
+        if ("devolución a remitente" in estado or "devuelta" in estado or
+            "devolución informada" in estado or "devolucion informada" in estado):
+            # Cumplido si hubo al menos una visita, sin importar los días
+            if visitas > 0:
+                return "Devuelto - Cumplido (Visita a Tiempo)"
+            else:
+                return "Devuelto"
 
         if ed == "NO" and "esperando retiro" in estado:
             if pd.notna(row['Lead Time']) and row['Lead Time'] <= row['Días Prometidos']:
