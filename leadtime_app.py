@@ -1289,11 +1289,12 @@ if uploaded_file is not None:
 
     total_pedidos = df[~df['Cumplimiento'].isin(EXCLUIDOS_SLA)].shape[0]
     entregados = df[df['Cumplimiento'].str.startswith("Entregada")].shape[0]
-    devueltos = df[df['Cumplimiento'] == "Devuelto"].shape[0]
+    devueltos = df[df['Cumplimiento'] == "Devuelto"].shape[0]                     # Solo los que NO cumplieron
     devuelto_cumplido_visita = df[df['Cumplimiento'] == "Devuelto - Cumplido (Visita a Tiempo)"].shape[0]
+    total_devueltos = devueltos + devuelto_cumplido_visita                        # <-- Total real de devueltos
     canceladas = df[df['Cumplimiento'] == "Cancelada"].shape[0]
     logistica_inversa_pos_count = df[df['Cumplimiento'] == "Excluido - Logística Inversa POS"].shape[0]
-    pendientes_reales = total_pedidos - entregados - devueltos
+    pendientes_reales = total_pedidos - entregados - devueltos   # devueltos aquí son los que sí cuentan para SLA
 
     visita_en_tiempo = df[df['Cumplimiento'].str.contains("Visita en Tiempo", na=False)].shape[0]
     visita_fuera_tiempo = df[df['Cumplimiento'] == "Pendiente - Visita Fuera de Tiempo"].shape[0]
@@ -1302,7 +1303,7 @@ if uploaded_file is not None:
     en_tiempo_pd = df[df['Cumplimiento'] == "Entregada - En Tiempo (PD: Pago Pendiente)"].shape[0]
     fuera_tiempo = df[df['Cumplimiento'] == "Entregada - Fuera de Tiempo"].shape[0]
     fuera_tiempo_pd = df[df['Cumplimiento'] == "Entregada - Fuera de Tiempo (PD: Pago Pendiente)"].shape[0]
-    devuelto_count = devueltos
+    devuelto_count = total_devueltos
     devuelto_sin_cumplir = devuelto_count - devuelto_cumplido_visita
     pendiente_en_tiempo = df[df['Cumplimiento'] == "Pendiente - En Tiempo"].shape[0]
     pendiente_fuera_tiempo = df[df['Cumplimiento'] == "Pendiente - Fuera de Tiempo"].shape[0]
@@ -1386,9 +1387,7 @@ if uploaded_file is not None:
             " - En Tiempo (PD)",
             " - Fuera de Tiempo",
             " - Fuera de Tiempo (PD)",
-            "DEVUELTOS",
-            " - Devuelto Cumplido (visita a tiempo)",
-            " - Devuelto (sin visita / fuera de plazo)",
+            "DEVUELTOS",                    # Solo los que penalizan
             "CANCELADAS",
             "EXCLUIDOS - Logística Inversa POS",
             "PENDIENTES CON VISITA",
@@ -1403,9 +1402,8 @@ if uploaded_file is not None:
         ],
         "Cantidad": [
             total_pedidos, entregados, en_tiempo, en_tiempo_pd,
-            fuera_tiempo, fuera_tiempo_pd, devuelto_count,
-            devuelto_cumplido_visita,
-            devuelto_count - devuelto_cumplido_visita,
+            fuera_tiempo, fuera_tiempo_pd,
+            devueltos,                      # ← Solo los que penalizan
             canceladas,
             logistica_inversa_pos_count,
             visita_en_tiempo + visita_fuera_tiempo,
@@ -1421,9 +1419,7 @@ if uploaded_file is not None:
             f"{(en_tiempo_pd/total_pedidos*100):.1f}%" if total_pedidos > 0 else "0%",
             f"{(fuera_tiempo/total_pedidos*100):.1f}%" if total_pedidos > 0 else "0%",
             f"{(fuera_tiempo_pd/total_pedidos*100):.1f}%" if total_pedidos > 0 else "0%",
-            f"{(devuelto_count/total_pedidos*100):.1f}%" if total_pedidos > 0 else "0%",
-            f"{(devuelto_cumplido_visita/total_pedidos*100):.1f}%" if total_pedidos > 0 else "0%",
-            f"{((devuelto_count - devuelto_cumplido_visita)/total_pedidos*100):.1f}%" if total_pedidos > 0 else "0%",
+            f"{(devueltos/total_pedidos*100):.1f}%" if total_pedidos > 0 else "0%",   # ← sobre base gestionable
             f"{(canceladas/(total_pedidos + canceladas + logistica_inversa_pos_count)*100):.1f}%" if (total_pedidos + canceladas + logistica_inversa_pos_count) > 0 else "0%",
             f"{(logistica_inversa_pos_count/(total_pedidos + canceladas + logistica_inversa_pos_count)*100):.1f}%" if (total_pedidos + canceladas + logistica_inversa_pos_count) > 0 else "0%",
             f"{((visita_en_tiempo + visita_fuera_tiempo)/total_pedidos*100):.1f}%" if total_pedidos > 0 else "0%",
