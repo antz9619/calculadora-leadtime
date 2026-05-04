@@ -486,6 +486,9 @@ if uploaded_file is not None:
 
         if "cancelada" in estado:
             return "Cancelada"
+        
+        if "contingencia" in estado:
+            return "Contingencia"
 
         # --- CLIENTES EVENTUAL: detección por destinatario ---
         if row.get('Cliente', '') == "EVENTUAL":
@@ -564,7 +567,7 @@ if uploaded_file is not None:
     df['Cumplimiento'] = df.apply(determinar_cumplimiento_mejorado, axis=1)
 
     # --- CATEGORÍAS EXCLUIDAS DEL SLA ---
-    EXCLUIDOS_SLA = ["Cancelada", "Excluido - Logística Inversa POS", "Devuelto - Cumplido (Visita a Tiempo)"]
+    EXCLUIDOS_SLA = ["Cancelada", "Excluido - Logística Inversa POS", "Devuelto - Cumplido (Visita a Tiempo)", "Contingencia"]
 
     def calcular_dias_restantes(row):
         cumplimiento = str(row['Cumplimiento'])
