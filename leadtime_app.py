@@ -504,7 +504,8 @@ if uploaded_file is not None:
 
         # --- DEVOLUCIONES POR ESTADO (APLICA A TODOS LOS CLIENTES) ---
         if ("devolución a remitente" in estado or "devuelta" in estado or
-            "devolución informada" in estado or "devolucion informada" in estado):
+            "devolución informada" in estado or "devolucion informada" in estado or
+            "devolución en destino" in estado):
             # Cumplido si hubo al menos una visita, sin importar los días
             if visitas > 0:
                 return "Devuelto - Cumplido (Visita a Tiempo)"
