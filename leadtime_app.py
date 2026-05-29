@@ -136,6 +136,91 @@ def calcular_dias_habiles(fecha_inicio, fecha_fin):
         current += timedelta(days=1)
     return dias
 
+def calcular_conteo_diario_amba(df):
+    """Genera conteo diario de AMBA y detalle de pendientes, con agrupación correcta."""
+    # --- Filtrado ---
+    mask_amba = df['Categoria'].isin(['AMBA cercano', 'AMBA interior'])
+    mask_excluir = (
+        df['Cumplimiento'].isin(['Cancelada', 'Excluido - Logística Inversa POS']) |
+        df['Cumplimiento'].str.contains('Devuelto', na=False)
+    )
+    df_amba = df[mask_amba & ~mask_excluir].copy()
+
+    # --- Columnas de trabajo ---
+    df_amba['es_entregado'] = df_amba['Estado'].str.contains('Entregada', na=False)
+    df_amba['sla_dias'] = df_amba['Categoria'].map({'AMBA cercano': 2, 'AMBA interior': 5})
+    df_amba['lt_num'] = pd.to_numeric(df_amba['Lead Time'], errors='coerce')
+    df_amba['a_tiempo'] = df_amba['es_entregado'] & (df_amba['lt_num'] <= df_amba['sla_dias'])
+
+    # --- Fecha de agrupación (siguiente día hábil si no está entregado) ---
+    df_amba['fecha_ref'] = pd.to_datetime(df_amba['Fecha'], errors='coerce')
+
+    def siguiente_dia_habil(fecha):
+        if pd.isnull(fecha):
+            return pd.NaT
+        d = fecha + timedelta(days=1)
+        while not es_dia_habil(d):
+            d += timedelta(days=1)
+        return d
+
+    df_amba['fecha_agrup'] = np.where(
+        df_amba['es_entregado'],
+        df_amba['fecha_ref'],
+        df_amba['fecha_ref'].apply(siguiente_dia_habil)
+    )
+
+    # --- CLAVE: normalizar fecha a solo día, sin hora ni timezone ---
+    df_amba['fecha_agrup_d'] = pd.to_datetime(df_amba['fecha_agrup']).dt.normalize().dt.tz_localize(None)
+
+    # --- Variables numéricas para agregación ---
+    df_amba['entregado_int'] = df_amba['es_entregado'].astype(int)
+    df_amba['tiempo_int'] = df_amba['a_tiempo'].astype(int)
+    df_amba['fuera_int'] = (df_amba['es_entregado'] & ~df_amba['a_tiempo']).astype(int)
+    df_amba['pendiente_int'] = (~df_amba['es_entregado']).astype(int)
+
+    # --- Agrupación diaria por categoría ---
+    conteos = df_amba.groupby(['fecha_agrup_d', 'Categoria'], as_index=False).agg(
+        Entregados_En_Tiempo=('tiempo_int', 'sum'),
+        Entregados_Fuera=('fuera_int', 'sum'),
+        Total_Entregados=('entregado_int', 'sum'),
+        Total_Pendientes=('pendiente_int', 'sum')
+    )
+
+    conteos['Total_Gestionable'] = conteos['Total_Entregados'] + conteos['Total_Pendientes']
+    conteos['% Entregas en Tiempo'] = (conteos['Entregados_En_Tiempo'] / conteos['Total_Gestionable']).fillna(0)
+    conteos['% Entregas Totales'] = (conteos['Total_Entregados'] / conteos['Total_Gestionable']).fillna(0)
+
+    # Renombrar y ordenar
+    conteos = conteos.rename(columns={'fecha_agrup_d': 'Fecha', 'Categoria': 'Categoría'})
+    conteos = conteos.sort_values(['Fecha', 'Categoría']).reset_index(drop=True)
+
+    # Formatear fecha para visualización
+    conteos['Fecha'] = conteos['Fecha'].dt.strftime('%d/%m/%Y')
+
+    # --- Detalle de pendientes ---
+    df_pend = df_amba[~df_amba['es_entregado']].copy()
+    df_pend['Demora'] = df_pend['lt_num'] - df_pend['sla_dias']
+    df_pend['Demora'] = df_pend['Demora'].apply(lambda x: f"+{int(x)} días" if pd.notna(x) else "-")
+    df_pend['Observación'] = df_pend['Cumplimiento']
+
+    detalle = df_pend[[
+        'fecha_agrup_d', 'Guia', 'Destinatario', 'Localidad destino',
+        'Categoria', 'Días Prometidos', 'Lead Time', 'Visitas', 'Demora', 'Observación'
+    ]].copy()
+
+    detalle = detalle.rename(columns={
+        'fecha_agrup_d': 'Fecha',
+        'Categoria': 'Categoría',
+        'Localidad destino': 'Localidad',
+        'Días Prometidos': 'Días Prom.',
+        'Lead Time': 'Lead Time'
+    })
+    detalle['Fecha'] = detalle['Fecha'].dt.strftime('%d/%m/%Y')
+    detalle = detalle.sort_values(['Fecha', 'Categoría']).reset_index(drop=True)
+
+    return conteos, detalle
+
+
 # --- LISTA DE LOCALIDADES AMBA ---
 amba_localidades = [
     "CIUDAD AUTONOMA BUENOS AIRES", "AVELLANEDA", "LANUS", "LOMAS DE ZAMORA",
@@ -1484,6 +1569,58 @@ if uploaded_file is not None:
                      delta=f"{en_tiempo_interior_amba} de {total_interior_amba} pedidos")
     else:
         st.info("No hay datos de AMBA para mostrar con los filtros actuales.")
+
+    # --- SECCIÓN: CONTEO DIARIO AMBA ---
+    st.header("📆 Conteo Diario AMBA (Cercano / Interior)")
+    st.markdown("Desglose diario de entregas a tiempo, fuera de tiempo y pendientes.")
+
+    try:
+        conteo_amba, detalle_pendientes = calcular_conteo_diario_amba(df)
+
+        if not conteo_amba.empty:
+            # Mostrar tabla resumen
+            st.subheader("📊 Resumen diario")
+            # Formatear porcentajes solo para visualización
+            conteo_amba_display = conteo_amba.copy()
+            conteo_amba_display['% Entregas en Tiempo'] = conteo_amba_display['% Entregas en Tiempo'].apply(lambda x: f"{x:.1%}")
+            conteo_amba_display['% Entregas Totales'] = conteo_amba_display['% Entregas Totales'].apply(lambda x: f"{x:.1%}")
+            st.dataframe(conteo_amba_display, use_container_width=True)
+
+            # Detalle de pendientes por día
+            if not detalle_pendientes.empty:
+                st.subheader("📋 Detalle de pendientes por día")
+                for fecha, grupo in detalle_pendientes.groupby('Fecha'):
+                    with st.expander(f"Pendientes del {fecha} (creados el día hábil anterior)"):
+                        st.dataframe(grupo.drop(columns=['Fecha']), use_container_width=True)
+
+            # Generar Excel con formato de porcentaje
+            output_conteo = io.BytesIO()
+            with pd.ExcelWriter(output_conteo, engine='openpyxl') as writer:
+                # Hoja resumen
+                conteo_amba.to_excel(writer, sheet_name='Resumen Diario', index=False)
+                # Formatear columnas de porcentaje en el archivo
+                ws_resumen = writer.sheets['Resumen Diario']
+                for col in ['H', 'I']:  # Columnas % Entregas en Tiempo y % Entregas Totales
+                    for cell in ws_resumen[col]:
+                        if isinstance(cell.value, (int, float)):
+                            cell.number_format = '0.0%'
+
+                # Hoja detalle
+                if not detalle_pendientes.empty:
+                    detalle_pendientes.to_excel(writer, sheet_name='Detalle Pendientes', index=False)
+
+            output_conteo.seek(0)
+
+            st.download_button(
+                label="📥 Descargar Conteo Diario AMBA (Excel)",
+                data=output_conteo,
+                file_name="Conteo_Diario_AMBA.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+        else:
+            st.info("No hay datos de AMBA que coincidan con los filtros actuales.")
+    except Exception as e:
+        st.error(f"Error al generar el conteo diario AMBA: {e}") 
 
     # --- GRÁFICO DE TORTA (CON SLICE LOGÍSTICA INVERSA POS) ---
     categorias_mejoradas = [
