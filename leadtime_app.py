@@ -3,19 +3,7 @@ import pandas as pd
 from datetime import datetime, timedelta, date
 import plotly.express as px
 import plotly.graph_objects as go
-from pptx import Presentation
-from pptx.util import Inches, Pt
-from pptx.enum.text import PP_ALIGN
-from pptx.dml.color import RGBColor
 import io
-from collections import Counter
-import matplotlib.pyplot as plt
-from openpyxl.drawing.image import Image as XLImage
-from openpyxl import Workbook
-from openpyxl.chart import PieChart, Reference
-from openpyxl.chart.series import DataPoint
-from openpyxl.styles import PatternFill
-from openpyxl.chart.label import DataLabelList
 import numpy as np
 import unicodedata
 import pytz
@@ -36,39 +24,80 @@ def generar_excel_desde_df(df, nombre_hoja="Datos"):
     output.seek(0)
     return output
 
-# --- SISTEMA MEJORADO DE FERIADOS Y PUENTES ---
+# ------------------------------------------------------------------------
+# FERIADOS ARGENTINOS POR AÑO (agregá el año nuevo cuando lo necesites)
+# ------------------------------------------------------------------------
+def _easter(year):
+    """Calcula el domingo de Pascua (algoritmo de Anonymous)."""
+    a = year % 19
+    b = year // 100
+    c = year % 100
+    d = b // 4
+    e = b % 4
+    f = (b + 8) // 25
+    g = (b - f + 1) // 3
+    h = (19 * a + b - d - g + 15) % 30
+    i = c // 4
+    k = c % 4
+    L = (32 + 2 * e + 2 * i - h - k) % 7
+    m = (a + 11 * h + 22 * L) // 451
+    month = (h + L - 7 * m + 114) // 31
+    day = ((h + L - 7 * m + 114) % 31) + 1
+    return date(year, month, day)
+
+
+def _feriados_por_anio(anio):
+    """Devuelve un set de (mes, día) con todos los feriados del año."""
+    pascua = _easter(anio)
+    # Carnaval (lunes y martes)
+    carnaval_lunes = pascua - timedelta(days=48)
+    carnaval_martes = pascua - timedelta(days=47)
+    # Semana Santa
+    viernes_santo = pascua - timedelta(days=2)
+
+    # Feriados fijos + los que dependen de Pascua
+    feriados = {
+        (1, 1),                                     # Año Nuevo
+        (carnaval_lunes.month, carnaval_lunes.day),  # Carnaval (lunes)
+        (carnaval_martes.month, carnaval_martes.day), # Carnaval (martes)
+        (3, 24),                                    # Día Nacional de la Memoria
+        (4, 2),                                     # Día del Veterano
+        (viernes_santo.month, viernes_santo.day),   # Viernes Santo
+        (5, 1),                                     # Día del Trabajo
+        (5, 25),                                    # Revolución de Mayo
+        (6, 17),                                    # Güemes
+        (6, 20),                                    # Día de la Bandera
+        (7, 9),                                     # Independencia
+        (10, 12),                                   # Día de la Raza
+        (11, 21),                                   # Día de la Soberanía Nacional
+        (12, 8),                                    # Inmaculada Concepción
+        (12, 25),                                   # Navidad
+    }
+
+    # Puentes definidos manualmente (por decreto, etc.)
+    puentes = set()
+    if anio == 2025:
+        puentes.add((3, 23))   # feriado puente decretado
+        puentes.add((11, 24))  # Día de la Virgen
+        puentes.add((12, 24))  # Pre Navidad
+        puentes.add((12, 31))  # Fin de Año
+    # Para otros años, agregar los puentes correspondientes dentro de otro if anio == XXXX
+
+    return feriados.union(puentes)
+
 
 def es_dia_festivo(fecha=None):
-    """Verifica si la fecha es un día festivo configurado"""
+    """Verifica si la fecha es un día festivo (feriado o puente) para el año correspondiente."""
     if fecha is None:
         fecha = date.today()
     if isinstance(fecha, datetime):
         fecha = fecha.date()
-    festivos = [
-        (1, 1),   # Año Nuevo
-        (2, 16),  # Carnaval
-        (2, 17),  # Carnaval
-        (3, 23),  # Feriado Puente
-        (3, 24),  # Día Nacional de la Memoria
-        (4, 2),   # Día del Veterano
-        (4, 3),   # Viernes Santo
-        (5, 1),   # Día del Trabajo
-        (5, 25),  # Día de la Revolución de Mayo
-        (6, 17),  # Paso a la Inmortalidad del Gral. Martín Güemes
-        (6, 20),  # Día de la Bandera
-        (7, 9),   # Día de la Independencia
-        (10, 12), # Día de la Raza
-        (11, 21), # Día de la Soberanía Nacional
-        (11, 24), # Día de la Virgen
-        (12, 8),  # Inmaculada Concepción
-        (12, 24), # Pre Navidad
-        (12, 25), # Navidad
-        (12, 31), # Fin de Año
-    ]
-    return (fecha.month, fecha.day) in festivos
+    feriados = _feriados_por_anio(fecha.year)
+    return (fecha.month, fecha.day) in feriados
+
 
 def es_feriado_puente(fecha):
-    """Detecta feriados puente con mensaje descriptivo."""
+    """Detecta si un viernes es puente (por feriado el sábado/domingo)."""
     if isinstance(fecha, datetime):
         fecha = fecha.date()
     if fecha.weekday() == 4:  # Viernes
@@ -246,7 +275,9 @@ excepciones_amba = [
     "TANDIL, BUENOS AIRES", "MAR DEL PLATA, BUENOS AIRES",
     "BAHIA BLANCA, BUENOS AIRES", "NECOCHEA, BUENOS AIRES",
     "OLAVARRIA, BUENOS AIRES", "AZUL, BUENOS AIRES",
-    "SAN MIGUEL DE TUCUMAN", "SAN MIGUEL, TUCUMAN", "TUCUMAN, TUCUMAN"
+    "SAN MIGUEL DE TUCUMAN", "SAN MIGUEL, TUCUMAN", "TUCUMAN, TUCUMAN",
+    "YERBA BUENA, TUCUMAN", "TAFI VIEJO, TUCUMAN",
+    "LAS TALITAS, TUCUMAN", "BANDA DEL RIO SALI, TUCUMAN"
 ]
 
 def determinar_zona(localidad_destino):
@@ -263,6 +294,7 @@ def determinar_zona(localidad_destino):
 
     localidad_normalizada = normalizar_texto(localidad)
 
+    # Provincias del interior (detectadas directamente)
     provincias_interior = [
         "TUCUMAN", "CATAMARCA", "LA RIOJA", "SANTIAGO DEL ESTERO", "SALTA",
         "JUJUY", "MENDOZA", "SAN JUAN", "SAN LUIS", "CORDOBA", "SANTA FE",
@@ -277,20 +309,9 @@ def determinar_zona(localidad_destino):
             if re.search(patron_provincia, localidad_normalizada):
                 return "INTERIOR"
 
-    excepciones_amba_actualizadas = [
-        "SAN MARTIN, SANTA FE", "SAN MARTIN, MENDOZA", "SAN MARTIN, SAN JUAN",
-        "SAN MARTIN, CORRIENTES", "SAN MARTIN, ENTRE RIOS",
-        "VILLA LIB. GENERAL SAN MARTIN", "GENERAL SAN MARTIN",
-        "SAN MARTIN DE LOS ANDES", "SAN MARTIN DE LA VEGA",
-        "TANDIL, BUENOS AIRES", "MAR DEL PLATA, BUENOS AIRES",
-        "BAHIA BLANCA, BUENOS AIRES", "NECOCHEA, BUENOS AIRES",
-        "OLAVARRIA, BUENOS AIRES", "AZUL, BUENOS AIRES",
-        "SAN MIGUEL DE TUCUMAN", "SAN MIGUEL, TUCUMAN", "TUCUMAN, TUCUMAN",
-        "YERBA BUENA, TUCUMAN", "TAFI VIEJO, TUCUMAN",
-        "LAS TALITAS, TUCUMAN", "BANDA DEL RIO SALI, TUCUMAN"
-    ]
-
-    for excepcion in excepciones_amba_actualizadas:
+    # Excepciones: localidades que a pesar de estar en Buenos Aires no son AMBA
+    # (usamos la lista global excepciones_amba, ya unificada y extendida)
+    for excepcion in excepciones_amba:
         excepcion_normalizada = normalizar_texto(excepcion)
         if excepcion_normalizada == localidad_normalizada:
             return "INTERIOR"
@@ -299,6 +320,7 @@ def determinar_zona(localidad_destino):
             if re.search(patron_excepcion, localidad_normalizada):
                 return "INTERIOR"
 
+    # Recorrer la lista global de localidades AMBA
     for localidad_amba in amba_localidades:
         amba_normalizada = normalizar_texto(localidad_amba)
         if amba_normalizada == localidad_normalizada:
@@ -314,11 +336,13 @@ def determinar_zona(localidad_destino):
                 if any(provincia in resto_limpio for provincia in provincias_interior):
                     return "INTERIOR"
 
+    # Palabras clave para CABA
     palabras_caba = ["CAPITAL FEDERAL", "C.A.B.A.", "CABA", "CIUDAD AUTONOMA"]
     for palabra in palabras_caba:
         if palabra in localidad:
             return "AMBA"
 
+    # Si no se identificó nada, por defecto INTERIOR
     return "INTERIOR"
 
 def limpiar_localidad(localidad):
@@ -353,11 +377,15 @@ def determinar_categoria(localidad_destino):
         return "Interior"
     loc_str = str(localidad_destino).upper().strip()
 
+    # --- NORMALIZACIÓN EXTRA PARA TYPOS FRECUENTES ---
+    loc_str = loc_str.replace("MARCOZ", "MARCOS")   # por si aparece "Marcoz Paz"
+
     def normalizar(texto):
         return ''.join(c for c in unicodedata.normalize('NFD', texto) if unicodedata.category(c) != 'Mn')
 
     loc_norm = normalizar(loc_str)
 
+    # Provincias del interior (si aparece alguna, ya es Interior sin más vueltas)
     provincias_interior = [
         "TUCUMAN", "CATAMARCA", "LA RIOJA", "SANTIAGO DEL ESTERO", "SALTA",
         "JUJUY", "MENDOZA", "SAN JUAN", "SAN LUIS", "CORDOBA", "SANTA FE",
@@ -370,15 +398,20 @@ def determinar_categoria(localidad_destino):
 
     es_buenos_aires = "BUENOS AIRES" in loc_norm
 
+    # --- AMBA INTERIOR (lejanos + las 4 localidades agregadas) ---
     amba_lejano_lista = [
         "GENERAL RODRIGUEZ", "CITY BELL", "TOLOSA", "CAÑUELAS", "LA PLATA",
-        "PILAR", "GENERAL LAS HERAS", "BRANDSEN", "LUJAN", "CAMPANA", "ZARATE"
+        "PILAR", "GENERAL LAS HERAS", "BRANDSEN", "LUJAN", "CAMPANA", "ZARATE",
+        "BERISSO", "MARCOS PAZ", "SAN VICENTE", "ENSENADA"   # ✅ agregadas
     ]
     for ciudad in amba_lejano_lista:
         if re.search(r'\b' + re.escape(normalizar(ciudad)) + r'\b', loc_norm):
-            if es_buenos_aires or ciudad in ["CITY BELL", "TOLOSA", "LA PLATA"]:
+            # estas localidades siempre son AMBA interior, tengan o no "BUENOS AIRES"
+            if es_buenos_aires or ciudad in ["CITY BELL", "TOLOSA", "LA PLATA",
+                                             "BERISSO", "MARCOS PAZ", "SAN VICENTE", "ENSENADA"]:
                 return "AMBA interior"
 
+    # --- AMBA CERCANO ---
     amba_cercano_lista = [
         "CIUDAD AUTONOMA BUENOS AIRES", "CAPITAL FEDERAL", "CABA",
         "AVELLANEDA", "LANUS", "LOMAS DE ZAMORA", "LA MATANZA", "MORON",
@@ -386,8 +419,8 @@ def determinar_categoria(localidad_destino):
         "MORENO", "HURLINGHAM", "ITUZAINGO", "BERAZATEGUI", "FLORENCIO VARELA",
         "QUILMES", "ALMIRANTE BROWN", "ESTEBAN ECHEVERRIA", "EZEIZA",
         "SAN FERNANDO", "TIGRE", "SAN MIGUEL", "MALVINAS ARGENTINAS",
-        "JOSE C. PAZ", "ESCOBAR", "MERLO", "MARCOS PAZ", "PRESIDENTE PERON",
-        "SAN VICENTE", "BERISSO", "ENSENADA", "MUNRO", "SAAVEDRA", "FLORES",
+        "JOSE C. PAZ", "ESCOBAR", "MERLO", "PRESIDENTE PERON",
+        "MUNRO", "SAAVEDRA", "FLORES",
         "ALMAGRO", "VILLA URQUIZA", "COLEGIALES", "PALERMO", "RECOLETA",
         "BELGRANO", "NUÑEZ", "CABALLITO", "BOEDO", "SAN TELMO", "CONSTITUCION",
         "RETIRO", "SAN CRISTOBAL", "BALVANERA", "MONTSERRAT",
@@ -397,6 +430,7 @@ def determinar_categoria(localidad_destino):
         if re.search(r'\b' + re.escape(normalizar(ciudad)) + r'\b', loc_norm):
             return "AMBA cercano"
 
+    # Si llegó hasta acá y es provincia de Buenos Aires
     if es_buenos_aires:
         return "Buenos Aires interior"
 
@@ -415,7 +449,7 @@ def es_logistica_inversa_pos(row):
 # --- INTERFAZ STREAMLIT ---
 st.set_page_config(page_title="Calculadora de Lead Time", layout="wide")
 st.title("📊 Calculadora de Lead Time - Indicadores Mejorados")
-st.markdown("Sube tu reporte diario y obtén estadísticas + PPT listo para presentar.")
+st.markdown("Sube tu reporte diario y obtén estadísticas listas para analizar.")
 uploaded_file = st.file_uploader("📂 Sube tu archivo Excel", type=["xlsx", "xls"])
 
 if uploaded_file is not None:
@@ -845,9 +879,6 @@ if uploaded_file is not None:
             estado = str(row.get('Estado', '')).lower()
             cumplimiento = str(row.get('Cumplimiento', ''))
             lead_time = row.get('Lead Time')
-            cliente = str(row.get('Cliente', '')).strip().upper()
-            subcuenta = str(row.get('Subcuenta', '')).strip().upper()
-            categoria = str(row.get('Categoria', '')).strip()
             fecha_creacion = row.get('Fecha')
 
             # No aplica a entregados, cancelados, devueltos ni logística inversa
@@ -857,25 +888,18 @@ if uploaded_file is not None:
                 "excluido" in cumplimiento.lower()):
                 return ""
 
-            if "DELIVERY HERO" in cliente and "RIDERS" in subcuenta:
-                dias_prometidos_correcto = 3
-            else:
-                origen = str(row.get('Origen', '')).strip().upper()
-                provincia_origen = origen.split(",")[-1].strip() if "," in origen else origen
-                origen_es_interior = any(prov in provincia_origen for prov in PROVINCIAS_INTERIOR)
-                if origen_es_interior:
-                    dias_prometidos_correcto = 5
-                elif categoria == "AMBA cercano":
-                    dias_prometidos_correcto = 2
-                elif categoria in ["AMBA interior", "Buenos Aires interior"]:
-                    dias_prometidos_correcto = 5
-                else:
-                    dias_prometidos_correcto = 5
+            # ✅ Usamos el SLA que ya calculaste en 'Días Prometidos' (sin recalcular)
+            dias_prometidos_correcto = row.get('Días Prometidos')
+            if pd.isna(dias_prometidos_correcto):
+                return ""
 
             if (pd.notna(lead_time) and isinstance(lead_time, (int, float)) and
                 pd.notna(fecha_creacion)):
-                if lead_time >= dias_prometidos_correcto:
+                # ✅ Ahora "Vence hoy" cuando el lead time iguala el SLA
+                if lead_time > dias_prometidos_correcto:
                     return "Ya vencido"
+                elif lead_time == dias_prometidos_correcto:
+                    return "Vence hoy"
                 elif lead_time == dias_prometidos_correcto - 1:
                     fecha_actual = obtener_fecha_actual_argentina().date()
                     fecha_manana = fecha_actual + timedelta(days=1)
@@ -890,6 +914,7 @@ if uploaded_file is not None:
                             return f"Vence {proximo_dia_habil.strftime('%d/%m')}"
                         else:
                             return f"Vence en {dias_hasta_proximo_habil} días"
+                return ""
             return ""
         except Exception as e:
             return ""
@@ -909,8 +934,11 @@ if uploaded_file is not None:
 
     # --- ASIGNAR PRIORIDAD ---
     def asignar_prioridad(row):
+        # 1. Críticos
         if row['Alerta Vencimiento Mañana'] == "Ya vencido":
             return "ALTA - Ya Vencido"
+        elif row['Alerta Vencimiento Mañana'] == "Vence hoy":
+            return "ALTA - Vence Hoy"
         elif row['Alerta Pendiente Fuera Tiempo'] == "Fuera de tiempo crítico":
             return "ALTA - Fuera de Tiempo"
         elif row['Alerta Devolución'] == "Sugerir devolución":
@@ -925,16 +953,21 @@ if uploaded_file is not None:
             return "ALTA - Creada Demorada"
         elif row['Alerta Vencimiento Mañana'] == "Vence mañana":
             return "ALTA - Vence Mañana"
+
+        # 2. Medios
         elif row['Alerta Seguimiento Visitas'] != "":
             return "MEDIA - Seguimiento Visitas"
         elif row['Alerta Una Visita Sin Seguimiento'] != "":
             return "MEDIA - 1 Visita Sin Seg."
         elif row['Alerta Creada Demorada'] != "" and "próxima a vencer" in row['Alerta Creada Demorada']:
             return "MEDIA - Creada Próxima a Vencer"
+
+        # 3. Bajos / Info
         elif row['Alerta Pago Pendiente'] == "Pago pendiente demorado":
             return "BAJA - Pago Pendiente"
         elif row['Alerta Origen Retiro POS'] != "":
             return "INFO - Logística Inversa POS"
+
         else:
             return ""
 
@@ -942,17 +975,18 @@ if uploaded_file is not None:
 
     prioridad_orden = {
         "ALTA - Ya Vencido": 1,
-        "ALTA - Fuera de Tiempo": 2,
-        "ALTA - Devolución Demorada": 3,
-        "ALTA - Redespacho": 4,
-        "ALTA - Reprogramada Sin Visita": 5,
-        "ALTA - Creada Demorada": 6,
-        "ALTA - Vence Mañana": 7,
-        "MEDIA - Seguimiento Visitas": 8,
-        "MEDIA - 1 Visita Sin Seg.": 9,
-        "MEDIA - Creada Próxima a Vencer": 10,
-        "BAJA - Pago Pendiente": 11,
-        "INFO - Logística Inversa POS": 12
+        "ALTA - Vence Hoy": 2,
+        "ALTA - Fuera de Tiempo": 3,
+        "ALTA - Devolución Demorada": 4,
+        "ALTA - Redespacho": 5,
+        "ALTA - Reprogramada Sin Visita": 6,
+        "ALTA - Creada Demorada": 7,
+        "ALTA - Vence Mañana": 8,
+        "MEDIA - Seguimiento Visitas": 9,
+        "MEDIA - 1 Visita Sin Seg.": 10,
+        "MEDIA - Creada Próxima a Vencer": 11,
+        "BAJA - Pago Pendiente": 12,
+        "INFO - Logística Inversa POS": 13
     }
     df['Orden Prioridad'] = df['Prioridad Alerta'].map(prioridad_orden).fillna(999)
     df = df.sort_values('Orden Prioridad').reset_index(drop=True)
@@ -1026,6 +1060,12 @@ if uploaded_file is not None:
         st.warning("⚠️ La columna 'Condición de venta' no existe. Se omitirá este filtro.")
         condicion_venta_seleccionada = "Todas"
 
+    # --- NUEVO FILTRO DE VENCIMIENTO ---
+    mostrar_vencimientos = st.sidebar.multiselect(
+        "Filtrar por Vencimiento",
+        ["Vence hoy", "Vence mañana", "Ya vencido"]
+    )
+
     # Aplicar todos los filtros
     df_final = df.copy()
     if cliente_seleccionado != "Todos":
@@ -1044,6 +1084,10 @@ if uploaded_file is not None:
         df_final = df_final[df_final['ED'] == ed_seleccionada]
     if 'Condición de venta' in df_final.columns and condicion_venta_seleccionada != "Todas":
         df_final = df_final[df_final['Condición de venta'] == condicion_venta_seleccionada]
+
+    # Aplicar filtro de vencimiento
+    if mostrar_vencimientos:
+        df_final = df_final[df_final['Alerta Vencimiento Mañana'].isin(mostrar_vencimientos)]
 
     df = df_final
 
@@ -1067,7 +1111,7 @@ if uploaded_file is not None:
         return (cumplidos_semana / total_pedidos_semana * 100)
 
     df_semana = df[~df['Cumplimiento'].isin(EXCLUIDOS_SLA)].groupby('Semana Calendario').apply(
-        calcular_cumplimiento_semana
+        calcular_cumplimiento_semana, include_groups=False
     ).reset_index(name='Porcentaje Cumplimiento')
 
     df_semana = df_semana.sort_values('Semana Calendario').reset_index(drop=True)
@@ -1095,7 +1139,7 @@ if uploaded_file is not None:
 
     st.subheader("Tabla de Cumplimiento por Semana con Alertas de Variación")
     st.dataframe(df_semana[['Semana Calendario', 'Porcentaje Cumplimiento', 'Alerta Variación']],
-                use_container_width=True)
+                width='stretch')
 
     if len(df_semana) > 1:
         fig_semana = px.line(
@@ -1120,7 +1164,7 @@ if uploaded_file is not None:
             yaxis=dict(range=[0, 100]), hovermode='x unified'
         )
         fig_semana.add_hline(y=80, line_dash="dash", line_color="red", annotation_text="Objetivo 80%")
-        st.plotly_chart(fig_semana, use_container_width=True)
+        st.plotly_chart(fig_semana, width='stretch')
 
     st.subheader("📊 Resumen de Tendencias por Semana")
     if len(df_semana) > 1:
@@ -1177,11 +1221,11 @@ if uploaded_file is not None:
         return (cumplidos_semana / total_pedidos_semana * 100)
 
     df_semana_zona = df[~df['Cumplimiento'].isin(EXCLUIDOS_SLA)].groupby(['Semana Calendario', 'ZONA']).apply(
-        calcular_cumplimiento_semana_zona
+        calcular_cumplimiento_semana_zona, include_groups=False
     ).reset_index(name='Porcentaje Cumplimiento')
 
     df_semana_total = df[~df['Cumplimiento'].isin(EXCLUIDOS_SLA)].groupby('Semana Calendario').apply(
-        calcular_cumplimiento_semana_zona
+        calcular_cumplimiento_semana_zona, include_groups=False
     ).reset_index(name='Porcentaje Cumplimiento')
     df_semana_total['ZONA'] = 'TOTAL'
 
@@ -1226,7 +1270,7 @@ if uploaded_file is not None:
     for col in df_display.columns:
         if '% Cumplimiento' in col:
             df_display[col] = df_display[col].apply(lambda x: f"{x:.1f}%" if pd.notna(x) else "N/A")
-    st.dataframe(df_display, use_container_width=True)
+    st.dataframe(df_display, width='stretch')
 
     if len(df_semana_completo) > 1:
         fig_semana_zona = px.line(
@@ -1258,7 +1302,7 @@ if uploaded_file is not None:
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
         )
         fig_semana_zona.add_hline(y=80, line_dash="dash", line_color="red", annotation_text="Objetivo 80%")
-        st.plotly_chart(fig_semana_zona, use_container_width=True)
+        st.plotly_chart(fig_semana_zona, width='stretch')
 
     st.subheader("📊 Resumen de Tendencias por Semana y Zona")
     if len(df_semana_completo) > 1:
@@ -1296,7 +1340,7 @@ if uploaded_file is not None:
         )
         fig_diferencias.update_layout(xaxis_title='Semana Calendario', yaxis_title='Diferencia (%)', hovermode='x unified')
         fig_diferencias.add_hline(y=0, line_dash="solid", line_color="black")
-        st.plotly_chart(fig_diferencias, use_container_width=True)
+        st.plotly_chart(fig_diferencias, width='stretch')
         st.subheader("🔍 Resumen de Diferencias AMBA vs INTERIOR")
         if len(df_comparativo) > 0:
             ultima_diferencia = df_comparativo.iloc[-1]['Diferencia (AMBA - INTERIOR)']
@@ -1499,7 +1543,7 @@ if uploaded_file is not None:
             visita_en_tiempo, visita_fuera_tiempo,
             pendiente_en_tiempo + pendiente_ultimo_dia + pendiente_fuera_tiempo,
             pendiente_en_tiempo, pendiente_ultimo_dia, pendiente_fuera_tiempo,
-            "", rechazos_ausentes
+            "-", rechazos_ausentes
         ],
         "Porcentaje": [
             "100%",
@@ -1523,7 +1567,7 @@ if uploaded_file is not None:
         ]
     }
     resumen_df = pd.DataFrame(resumen_data)
-    st.dataframe(resumen_df, use_container_width=True)
+    st.dataframe(resumen_df, width='stretch')
 
     # --- DESGLOSE AMBA ---
     st.header("📍 Desglose AMBA: Cercano vs Interior")
@@ -1551,15 +1595,29 @@ if uploaded_file is not None:
             "Días Prometidos": ["2 días", "5 días"]
         }
         df_amba_display = pd.DataFrame(data_amba)
-        st.dataframe(df_amba_display, use_container_width=True)
+        st.dataframe(df_amba_display, width='stretch')
         fig_amba = px.bar(
             df_amba_display, x="Categoría", y="Total Gestionables",
-            text="Total Gestionables", color="Categoría",
+            text="Total Gestionables",
+            color="Categoría",
+            color_discrete_map={"AMBA Cercano": "#1f77b4", "AMBA Interior": "#ff7f0e"},
             title="Volumen de envíos AMBA por subcategoría",
-            color_discrete_map={"AMBA Cercano": "#28a745", "AMBA Interior": "#fd7e14"}
+            labels={"Total Gestionables": "Cantidad de pedidos"}
         )
-        fig_amba.update_traces(texttemplate='%{text}', textposition='outside')
-        st.plotly_chart(fig_amba, use_container_width=True)
+
+        fig_amba.update_traces(
+            texttemplate='%{text}',
+            textposition='outside',
+            marker=dict(line=dict(color='white', width=1))
+        )
+        fig_amba.update_layout(
+            uniformtext_minsize=8,
+            uniformtext_mode='hide',
+            showlegend=False,
+            plot_bgcolor='rgba(0,0,0,0)',
+            margin=dict(l=10, r=10, t=40, b=10)
+        )
+        st.plotly_chart(fig_amba, width='stretch')
         col1, col2 = st.columns(2)
         with col1:
             st.metric("🎯 Cumplimiento AMBA Cercano", f"{pct_cercano:.1f}%",
@@ -1584,14 +1642,14 @@ if uploaded_file is not None:
             conteo_amba_display = conteo_amba.copy()
             conteo_amba_display['% Entregas en Tiempo'] = conteo_amba_display['% Entregas en Tiempo'].apply(lambda x: f"{x:.1%}")
             conteo_amba_display['% Entregas Totales'] = conteo_amba_display['% Entregas Totales'].apply(lambda x: f"{x:.1%}")
-            st.dataframe(conteo_amba_display, use_container_width=True)
+            st.dataframe(conteo_amba_display, width='stretch')
 
             # Detalle de pendientes por día
             if not detalle_pendientes.empty:
                 st.subheader("📋 Detalle de pendientes por día")
                 for fecha, grupo in detalle_pendientes.groupby('Fecha'):
                     with st.expander(f"Pendientes del {fecha} (creados el día hábil anterior)"):
-                        st.dataframe(grupo.drop(columns=['Fecha']), use_container_width=True)
+                        st.dataframe(grupo.drop(columns=['Fecha']), width='stretch')
 
             # Generar Excel con formato de porcentaje
             output_conteo = io.BytesIO()
@@ -1622,53 +1680,72 @@ if uploaded_file is not None:
     except Exception as e:
         st.error(f"Error al generar el conteo diario AMBA: {e}") 
 
-    # --- GRÁFICO DE TORTA (CON SLICE LOGÍSTICA INVERSA POS) ---
-    categorias_mejoradas = [
-        "Entregada - En Tiempo",
-        "Entregada - En Tiempo (PD)",
-        "Entregada - Fuera de Tiempo",
-        "Entregada - Fuera de Tiempo (PD)",
-        "Devuelto - Cumplido (Visita a Tiempo)",
-        "Devuelto (sin visita / fuera de plazo)",
-        "Cancelada",
-        "Excluido - Logística Inversa POS",
-        "Pendiente - Visita en Tiempo",
-        "Pendiente - Visita Fuera de Tiempo",
-        "Pendiente - En Tiempo",
-        "Pendiente - Último Día",
-        "Pendiente - Fuera de Tiempo"
+    # --- DISTRIBUCIÓN DE CUMPLIMIENTO (BARRAS HORIZONTALES COMPACTAS) ---
+    st.header("📊 Distribución de Cumplimiento")
+
+    total_pedidos_chart = df[~df['Cumplimiento'].isin(EXCLUIDOS_SLA)].shape[0]
+
+    categorias = [
+        "Entregada - En Tiempo", "Entregada - En Tiempo (PD)",
+        "Entregada - Fuera de Tiempo", "Entregada - Fuera de Tiempo (PD)",
+        "Devuelto - Cumplido (Visita a Tiempo)", "Devuelto (sin visita / fuera de plazo)",
+        "Cancelada", "Excluido - Logística Inversa POS",
+        "Pendiente - Visita en Tiempo", "Pendiente - Visita Fuera de Tiempo",
+        "Pendiente - En Tiempo", "Pendiente - Último Día", "Pendiente - Fuera de Tiempo"
     ]
-    valores_mejorados = [
+
+    valores = [
         en_tiempo, en_tiempo_pd, fuera_tiempo, fuera_tiempo_pd,
-        devuelto_cumplido_visita, devuelto_sin_cumplir, # ← en este orden
+        devuelto_cumplido_visita, devuelto_sin_cumplir,
         canceladas, logistica_inversa_pos_count,
         visita_en_tiempo, visita_fuera_tiempo,
         pendiente_en_tiempo, pendiente_ultimo_dia, pendiente_fuera_tiempo
     ]
-    fig1 = px.pie(
-        names=categorias_mejoradas,
-        values=valores_mejorados,
-        title="Distribución de Cumplimiento (Entregas vs Retiros vs Canceladas)",
-        color=categorias_mejoradas,
-        color_discrete_map={
-            "Entregada - En Tiempo": "#28a745",
-            "Entregada - En Tiempo (PD)": "#2ecc71",
-            "Entregada - Fuera de Tiempo": "#dc3545",
-            "Entregada - Fuera de Tiempo (PD)": "#e74c3c",
-            "Devuelto - Cumplido (Visita a Tiempo)": "#8e44ad",
-            "Devuelto (sin visita / fuera de plazo)": "#9b59b6",
-            "Cancelada": "#95a5a6",
-            "Excluido - Logística Inversa POS": "#17a2b8",
-            "Pendiente - Visita en Tiempo": "#3498db",
-            "Pendiente - Visita Fuera de Tiempo": "#e67e22",
-            "Pendiente - En Tiempo": "#ffc107",
-            "Pendiente - Último Día": "#fd7e14",
-            "Pendiente - Fuera de Tiempo": "#6c757d"
-        },
-        hole=0.4
+
+    colores = [
+        "#28a745", "#2ecc71", "#dc3545", "#e74c3c",
+        "#8e44ad", "#9b59b6", "#95a5a6", "#17a2b8",
+        "#3498db", "#e67e22", "#ffc107", "#fd7e14", "#6c757d"
+    ]
+
+    # DataFrame ordenado de mayor a menor (para que quede bien horizontal)
+    df_barras = pd.DataFrame({
+        "Categoría": categorias,
+        "Cantidad": valores,
+        "Color": colores
+    }).sort_values("Cantidad", ascending=True)  # ascendente: el más largo abajo
+
+    df_barras["Porcentaje"] = (df_barras["Cantidad"] / total_pedidos_chart * 100).fillna(0)
+
+    fig_hbar = go.Figure()
+
+    for i, row in df_barras.iterrows():
+        fig_hbar.add_trace(go.Bar(
+            y=[row["Categoría"]],
+            x=[row["Cantidad"]],
+            name=row["Categoría"],
+            orientation='h',
+            marker=dict(color=row["Color"]),
+            text=f"{row['Cantidad']} ({row['Porcentaje']:.1f}%)",
+            textposition='outside',
+            textfont=dict(size=9),                   # etiquetas chicas
+            hovertemplate=f"{row['Categoría']}: {row['Cantidad']} pedidos ({row['Porcentaje']:.1f}%)<extra></extra>"
+        ))
+
+    fig_hbar.update_layout(
+        title=dict(text="Distribución de Cumplimiento", font=dict(size=14)),
+        xaxis_title="Cantidad de pedidos",
+        yaxis=dict(visible=True, title="", tickfont=dict(size=9)),  # fuente chica para las categorías
+        showlegend=False,
+        height=350,                                  # más compacto
+        margin=dict(l=10, r=30, t=30, b=10),         # margen derecho para que no se corten las etiquetas
+        plot_bgcolor='rgba(0,0,0,0)',
+        barmode='group',
+        font=dict(size=10),
+        autosize=True
     )
-    fig1.update_traces(textinfo='percent+value', textposition='inside')
-    st.plotly_chart(fig1, use_container_width=True)
+
+    st.plotly_chart(fig_hbar, width='stretch')
 
     # --- COMPARATIVA DE INDICADORES ---
     st.header("📈 Comparativa de Indicadores de Cumplimiento")
@@ -1693,7 +1770,7 @@ if uploaded_file is not None:
     )
     fig2.update_traces(texttemplate='%{y:.1f}%', textposition='outside')
     fig2.update_layout(showlegend=False)
-    st.plotly_chart(fig2, use_container_width=True)
+    st.plotly_chart(fig2, width='stretch')
 
     # --- CUMPLIMIENTO POR CLIENTE ---
     st.header("📈 Cumplimiento Real por Cliente")
@@ -1723,7 +1800,7 @@ if uploaded_file is not None:
     )
     fig_cliente.update_traces(texttemplate='%{text:.1f}%', textposition='outside')
     fig_cliente.update_layout(yaxis={'categoryorder': 'total ascending'})
-    st.plotly_chart(fig_cliente, use_container_width=True)
+    st.plotly_chart(fig_cliente, width='stretch')
 
     # --- CUMPLIMIENTO POR ZONA ---
     st.header("🗺️ Cumplimiento Real por Zona (AMBA vs INTERIOR)")
@@ -1743,7 +1820,7 @@ if uploaded_file is not None:
         color='ZONA', color_discrete_map={'AMBA': '#28a745', 'INTERIOR': '#007bff'}
     )
     fig_zona.update_traces(texttemplate='%{y:.1f}%', textposition='outside')
-    st.plotly_chart(fig_zona, use_container_width=True)
+    st.plotly_chart(fig_zona, width='stretch')
 
     # --- TOP 5 AGENCIAS CON MÁS CANCELACIONES ---
     if canceladas > 0:
@@ -1758,7 +1835,7 @@ if uploaded_file is not None:
             )
             fig_cancel.update_traces(texttemplate='%{text}', textposition='outside')
             fig_cancel.update_layout(yaxis={'categoryorder': 'total ascending'})
-            st.plotly_chart(fig_cancel, use_container_width=True)
+            st.plotly_chart(fig_cancel, width='stretch')
     else:
         st.info("✅ No hay cancelaciones para mostrar.")
 
@@ -1774,7 +1851,7 @@ if uploaded_file is not None:
         )
         fig_loc.update_traces(texttemplate='%{text}', textposition='outside')
         fig_loc.update_layout(yaxis={'categoryorder': 'total ascending'})
-        st.plotly_chart(fig_loc, use_container_width=True)
+        st.plotly_chart(fig_loc, width='stretch')
     else:
         st.info("✅ No hay pedidos 'Fuera de Tiempo' para mostrar.")
 
@@ -1976,17 +2053,25 @@ if uploaded_file is not None:
         )
 
     # --- ALERTA: VENCIMIENTO ---
-    alertas_vencimiento_mañana_df = df[df['Alerta Vencimiento Mañana'].isin(["Vence mañana", "Ya vencido"])]
+    alertas_vencimiento_mañana_df = df[df['Alerta Vencimiento Mañana'].isin(["Vence hoy", "Vence mañana", "Ya vencido"])]
     if not alertas_vencimiento_mañana_df.empty:
         st.header("🚨 Alertas de Vencimiento")
-        st.write("Pedidos que **vencen mañana** o que **ya están vencidos**:")
+        st.write("Pedidos que **vence hoy**, **vence mañana** o que **ya están vencidos**:")
+        
+        # Conteos individuales
+        vence_hoy_count = len(alertas_vencimiento_mañana_df[alertas_vencimiento_mañana_df['Alerta Vencimiento Mañana'] == "Vence hoy"])
         vence_mañana_count = len(alertas_vencimiento_mañana_df[alertas_vencimiento_mañana_df['Alerta Vencimiento Mañana'] == "Vence mañana"])
         ya_vencido_count = len(alertas_vencimiento_mañana_df[alertas_vencimiento_mañana_df['Alerta Vencimiento Mañana'] == "Ya vencido"])
-        col1, col2 = st.columns(2)
+        
+        col1, col2, col3 = st.columns(3)
         with col1:
             st.metric("📅 Vencen Mañana", vence_mañana_count)
         with col2:
+            st.metric("🔴 Vence Hoy", vence_hoy_count)
+        with col3:
             st.metric("⏰ Ya Vencidos", ya_vencido_count)
+        
+        # Columnas a mostrar en la tabla
         columnas_alerta = [
             'Guia', 'Importe total', 'Cliente', 'Subcuenta', 'Destinatario', 'Tel Destinatario',
             'Loc', 'ZONA', 'Fecha', 'Fecha último estado', 'Estado',
@@ -1995,7 +2080,9 @@ if uploaded_file is not None:
         ]
         columnas_existentes = [col for col in columnas_alerta if col in alertas_vencimiento_mañana_df.columns]
         df_alerta = alertas_vencimiento_mañana_df[columnas_existentes]
+        
         st.dataframe(df_alerta)
+        
         excel_data = generar_excel_desde_df(df_alerta, "Alertas Vencimiento")
         st.download_button(
             label="📥 Descargar Alertas de Vencimiento (Excel)",
@@ -2015,7 +2102,7 @@ if uploaded_file is not None:
         (df['Alerta Pago Pendiente'] == "Pago pendiente demorado") |
         (df['Alerta En Tránsito Demorado'] != "") |
         (df['Alerta Creada Demorada'] != "") |
-        (df['Alerta Vencimiento Mañana'].isin(["Vence mañana", "Ya vencido"])) |
+        (df['Alerta Vencimiento Mañana'].isin(["Vence hoy", "Vence mañana", "Ya vencido"])) |   # ✅ agregado "Vence hoy"
         (df['Alerta Origen Retiro POS'] != "")
     ]
     if not todas_alertas.empty:
@@ -2066,9 +2153,11 @@ if uploaded_file is not None:
     if 'Categoria' in df.columns:
         df.rename(columns={'Categoria': 'Categoría'}, inplace=True)
 
-    alertas_vencimiento_count = len(df[df['Alerta Vencimiento Mañana'].isin(["Vence mañana", "Ya vencido"])])
+    # --- Conteos completos de vencimiento ---
+    vence_hoy_count = len(df[df['Alerta Vencimiento Mañana'] == "Vence hoy"])
     vence_mañana_count = len(df[df['Alerta Vencimiento Mañana'] == "Vence mañana"])
     ya_vencido_count = len(df[df['Alerta Vencimiento Mañana'] == "Ya vencido"])
+    alertas_vencimiento_count = vence_hoy_count + vence_mañana_count + ya_vencido_count
 
     stats_data = {
         "Métrica": [
@@ -2083,7 +2172,7 @@ if uploaded_file is not None:
             "SLA Principal (%)", "Cumplimiento Entregas (%)", "Cumplimiento Gestión (%)",
             "FADR (%)", "Pedidos por Visita", "Tasa Rechazo/Ausencia (%)",
             "Alertas Creada Demoradas", "Alertas Creada Próximas a Vencer",
-            "Alertas Vencimiento Total", "Alertas Vencen Mañana", "Alertas Ya Vencidos",
+            "Alertas Vencimiento Total", "Alertas Vence Hoy", "Alertas Vencen Mañana", "Alertas Ya Vencidos",
             "Alertas Logística Inversa POS"
         ],
         "Valor": [
@@ -2096,7 +2185,7 @@ if uploaded_file is not None:
             f"{sla_principal:.2f}%", f"{cumplimiento_tradicional:.2f}%", f"{cumplimiento_gestion:.2f}%",
             f"{fadr:.2f}%", f"{pedidos_por_visita:.2f}", f"{tasa_rechazo_ausencia:.2f}%",
             alertas_creada_criticas, alertas_creada_preventivas,
-            alertas_vencimiento_count, vence_mañana_count, ya_vencido_count,
+            alertas_vencimiento_count, vence_hoy_count, vence_mañana_count, ya_vencido_count,
             len(alertas_origen_pos)
         ]
     }
@@ -2125,87 +2214,6 @@ if uploaded_file is not None:
             data=excel_vista_actualizada,
             file_name="Vista_Previa_Actualizada.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
-
-    # --- POWERPOINT ---
-    def crear_pptx():
-        prs = Presentation()
-        slide_layout = prs.slide_layouts[0]
-        slide = prs.slides.add_slide(slide_layout)
-        title = slide.shapes.title
-        subtitle = slide.placeholders[1]
-        title.text = "Reporte de Cumplimiento de Entregas"
-        subtitle.text = "Lead Time - Indicadores Mejorados\nGenerado automáticamente"
-
-        slide_layout = prs.slide_layouts[1]
-        slide = prs.slides.add_slide(slide_layout)
-        title = slide.shapes.title
-        title.text = "Resumen Ejecutivo"
-        content = slide.placeholders[1]
-        tf = content.text_frame
-        tf.clear()
-        p = tf.paragraphs[0]
-        p.text = "Métricas Clave:"
-        p.font.bold = True
-        p.font.size = Pt(20)
-
-        alertas_vencimiento_count_ppt = len(df[df['Alerta Vencimiento Mañana'].isin(["Vence mañana", "Ya vencido"])])
-        vence_mañana_count_ppt = len(df[df['Alerta Vencimiento Mañana'] == "Vence mañana"])
-        ya_vencido_count_ppt = len(df[df['Alerta Vencimiento Mañana'] == "Ya vencido"])
-
-        metrics = [
-            f"• Total de pedidos (Excl. Canceladas/Inversa): {total_pedidos}",
-            f"• Entregados: {entregados} ({(entregados/total_pedidos*100):.1f}%)" if total_pedidos > 0 else f"• Entregados: {entregados}",
-            f"• Devueltos: {devueltos} ({(devueltos/total_pedidos*100):.1f}%)" if total_pedidos > 0 else f"• Devueltos: {devueltos}",
-            f"• Canceladas: {canceladas}",
-            f"• Logística Inversa POS (excluidos SLA): {logistica_inversa_pos_count}",
-            f"• SLA Principal: {sla_principal:.1f}%",
-            f"• Cumplimiento Entregas: {cumplimiento_tradicional:.1f}%",
-            f"• Cumplimiento Gestión: {cumplimiento_gestion:.1f}%",
-            f"• FADR (1er Intento): {fadr:.1f}%",
-            f"• Tasa Rechazo/Ausencia: {tasa_rechazo_ausencia:.1f}%",
-            f"• Alertas Activas: {len(todas_alertas)}",
-            f"• Alertas Creada Demoradas: {alertas_creada_criticas}",
-            f"• Alertas Vencimiento: {alertas_vencimiento_count_ppt}",
-            f"  - Vencen mañana: {vence_mañana_count_ppt}",
-            f"  - Ya vencidos: {ya_vencido_count_ppt}",
-            f"• Alertas Logística Inversa POS: {len(alertas_origen_pos)}"
-        ]
-        for metric in metrics:
-            p = tf.add_paragraph()
-            p.text = metric
-            p.font.size = Pt(16)
-
-        slide_layout = prs.slide_layouts[1]
-        slide = prs.slides.add_slide(slide_layout)
-        title = slide.shapes.title
-        title.text = "Cumplimiento por Semana"
-        content = slide.placeholders[1]
-        tf = content.text_frame
-        tf.clear()
-        p = tf.paragraphs[0]
-        p.text = "Evolución Semanal:"
-        p.font.bold = True
-        p.font.size = Pt(18)
-        if len(df_semana) > 0:
-            ultimas_semanas = df_semana.tail(4)
-            for _, semana in ultimas_semanas.iterrows():
-                p = tf.add_paragraph()
-                p.text = f"Semana {semana['Semana Calendario']}: {semana['Porcentaje Cumplimiento']:.1f}% - {semana['Alerta Variación']}"
-                p.font.size = Pt(14)
-
-        pptx_buffer = io.BytesIO()
-        prs.save(pptx_buffer)
-        pptx_buffer.seek(0)
-        return pptx_buffer
-
-    if st.button("📊 Generar y Descargar PowerPoint Actualizado"):
-        pptx_data = crear_pptx()
-        st.download_button(
-            label="⬇️ Descargar Presentación PPTX Actualizada",
-            data=pptx_data,
-            file_name="Reporte_LeadTime_Presentacion_Actualizada.pptx",
-            mime="application/vnd.openxmlformats-officedocument.presentationml.presentation"
         )
 
 else:
